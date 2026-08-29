@@ -4,6 +4,7 @@
 
 - ISO9660（Primary Volume Descriptor）
 - Joliet（Supplementary Volume Descriptor + Escape Sequence）
+- Rock Ridge（SUSP/RRIP，ISO9660 扩展）
 - UDF 2.01 / 2.50 / 2.60（NSR02 / NSR03）
 
 ## 文件系统选择策略
@@ -13,6 +14,45 @@
 多文件系统 ISO 不假设"第一个发现的 filesystem = 正确 filesystem"。
 按完整性递减选择：UDF 提供最完整的元数据与 Unicode 文件名；
 Joliet 提供 Unicode 名称；ISO9660 提供基础兼容。
+
+Rock Ridge 不是独立的文件系统，而是附加在 ISO9660 目录记录上的
+属性（SUSP 区）；仅在 ISO9660 树解析时生效（Joliet 树不带 RR）。
+
+## Rock Ridge (SUSP/RRIP)
+
+ISO9660 目录记录尾部可带 SUSP 区（System Use Area），RRIP 在其上定义
+真实文件属性。解析器按 4 字节对齐逐条读取记录，未知记录跳过。
+
+| 记录 | 作用 | 处理 |
+|------|------|------|
+| SP | SUA 偏移指针 | 校正 SUSP 区起始偏移（默认 14） |
+| NM | 真实文件名 | 优先于 ISO 名；续段（flags 0x01）拼接 |
+| PX | POSIX 权限 | little-endian mode，写入 entry.mode |
+| TF | 时间戳 | 短 7 字节 / 长 17 字节两种格式 |
+| SL | 符号链接 | 组件解析：`./`、`../`、`/`、文件名 |
+| CE | 续区 | 跨扇区跳转读取，深度上限 8 防循环 |
+| RR / ER | 扩展标识 | 标记 RRIP 存在，不单独处理 |
+
+### 名称优先级
+
+解析到 NM 时以其拼接结果为准（支持长文件名与 UTF-8 名称），否则回退
+到 ISO9660 原始名称。
+
+### rr_moved 深目录还原
+
+Rock Ridge 将路径深度超过 8 层的目录整体重定位到根目录下的
+`rr_moved`（或 `.rr_moved`），原位置只留单字节占位符（0x02-0x09）：
+
+- 解析器识别占位符并替换为 rr_moved 中的真实目录条目
+- 映射双策略：占位符数字名匹配（"2".."9"），或位置映射
+  （占位符 N ↔ rr_moved 目录数据第 N 条记录）
+- 无法还原的占位符直接跳过，不入库（不产生垃圾条目）
+- rr_moved 目录缺失或损坏时降级为普通条目，不影响其余树
+
+### 符号链接
+
+SL 记录解析为 EntryType::Symlink 虚拟条目，可被搜索命中；链接目标
+不解析、不跟随（容器内目标路径可能不存在）。
 
 ## UDF Unicode（OSTA Compressed Unicode）
 

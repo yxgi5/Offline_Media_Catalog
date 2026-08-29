@@ -310,35 +310,7 @@ Result<int64_t> Scanner::scan_directory(int64_t source_id, int64_t parent_id,
             }
 
             // Container discovery and expansion
-            if (options.scan_containers) {
-                std::string ext = entry.path().extension().string();
-                std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-                if (ext == ".iso" || ext == ".img") {
-                    ContainerData container;
-                    container.entry_id = entry_id;
-                    container.type = "iso";
-                    container.provider = "iso_provider";
-                    auto container_result = container_mgr_.insert(container);
-                    if (is_ok(container_result)) {
-                        LOG_VERBOSE("Discovered container: " + name + " (type=iso)");
-
-                        // Expansion: use the registered provider if available
-                        auto provider = ProviderRegistry::instance()
-                            .find_provider("iso");
-                        if (provider && options.max_container_depth >= 1) {
-                            ContainerOptions copt;
-                            copt.max_depth = options.max_container_depth;
-                            copt.current_depth = 1;
-                            if (provider->scan(entry_id, db_, copt)) {
-                                LOG_VERBOSE("Expanded container: " + name);
-                            } else {
-                                LOG_WARN("Container expansion failed: " + name);
-                                errors_++;
-                            }
-                        }
-                    }
-                }
-            }
+            expand_container_if_needed(entry_id, entry.path(), options);
         }
     }
 
@@ -380,7 +352,47 @@ Result<int64_t> Scanner::scan_file_entry(int64_t source_id, int64_t parent_id,
         compute_checksums(entry_id, file_path, options);
     }
 
+    // Container discovery and expansion
+    expand_container_if_needed(entry_id, file_path, options);
+
     return entry_id;
+}
+
+void Scanner::expand_container_if_needed(
+    int64_t entry_id, const std::filesystem::path& file_path,
+    const ScanOptions& options) {
+    if (!options.scan_containers) return;
+
+    std::string ext = file_path.extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+    if (ext != ".iso" && ext != ".img") return;
+
+    std::string name = file_path.filename().string();
+    ContainerData container;
+    container.entry_id = entry_id;
+    container.type = "iso";
+    container.provider = "iso_provider";
+    auto container_result = container_mgr_.insert(container);
+    if (is_err(container_result)) {
+        LOG_WARN("Failed to register container: " + name);
+        return;
+    }
+
+    LOG_VERBOSE("Discovered container: " + name + " (type=iso)");
+
+    // Expansion: use the registered provider if available
+    auto provider = ProviderRegistry::instance().find_provider("iso");
+    if (provider && options.max_container_depth >= 1) {
+        ContainerOptions copt;
+        copt.max_depth = options.max_container_depth;
+        copt.current_depth = 1;
+        if (provider->scan(entry_id, db_, copt)) {
+            LOG_VERBOSE("Expanded container: " + name);
+        } else {
+            LOG_WARN("Container expansion failed: " + name);
+            errors_++;
+        }
+    }
 }
 
 Result<bool> Scanner::compute_checksums(int64_t entry_id,

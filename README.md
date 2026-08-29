@@ -12,6 +12,9 @@
 - FTS5 文件名与路径搜索
 - Container 抽象：Discovery 与 Expansion 分离
 - ISO Provider：ISO9660 / Joliet / UDF（直接解析，不依赖系统挂载）
+- Rock Ridge 属性支持（SUSP/RRIP）：NM 长名、PX 权限、TF 时间戳、SL 符号链接、CE 续区
+- rr_moved 深目录还原（超过 8 层目录的 Rock Ridge 镜像正确恢复目录树）
+- 容器目录递归展开，深度可配置（`--depth`，单文件 ISO 源同样支持）
 - OSTA Compressed Unicode 解析（含非标准 UDF 兼容性恢复）
 - 可选校验码：SHA-256 / MD5 / CRC32
 - 扫描取消（Ctrl+C）与错误恢复
@@ -19,27 +22,110 @@
 
 ## 构建
 
+### 依赖
+
+- CMake ≥ 3.16
+- C++17 编译器：GCC / MinGW-w64 ≥ 9、MSVC ≥ 2019、Clang ≥ 10
+- SQLite3 amalgamation 与 GoogleTest 通过 CMake FetchContent 自动下载；
+  也可放入 `third_party/` 实现离线构建（`third_party/sqlite-amalgamation-3460100/`、
+  `third_party/googletest/`）
+
+### 步骤
+
 ```bash
+# 配置
 cmake -B build
+
+# 编译（默认同时构建 CLI 与测试）
 cmake --build build -j
-```
 
-测试：
-
-```bash
+# 运行测试
 ctest --test-dir build
 ```
 
-依赖通过 CMake FetchContent 自动下载（SQLite3 amalgamation、GoogleTest）。
+产物：
+
+| 目标 | 路径 |
+|------|------|
+| CLI | `build/offcat`（Windows 为 `build/offcat.exe`） |
+| 测试 | `build/offcat_tests`（Windows 为 `build/offcat_tests.exe`） |
+
+常用配置：
+
+```bash
+# 不构建测试
+cmake -B build -DOFFCAT_BUILD_TESTS=OFF
+
+# 使用 OpenSSL 计算 SHA-256/MD5（默认使用内置实现）
+cmake -B build -DOFFCAT_USE_OPENSSL=ON
+```
 
 ## 用法
 
+所有命令操作 SQLite Catalog 文件（`.db`）。典型流程：创建 → 扫描 → 搜索。
+
+### 1. 创建 Catalog
+
 ```bash
 offcat create catalog.db
+```
+
+### 2. 扫描
+
+```bash
+# 扫描目录（不含 ISO 容器）
+offcat scan /mnt/archive catalog.db
+
+# 扫描目录并展开其中的 ISO 容器（默认展开 1 层）
+offcat scan --containers /mnt/archive catalog.db
+
+# 展开容器并递归到更深层目录（depth=2：ISO 内目录的下一层）
+offcat scan --containers --depth 2 /mnt/archive catalog.db
+
+# 同时计算校验码
 offcat scan --containers --sha256 --crc32 /mnt/archive catalog.db
+offcat scan --containers --checksum /mnt/archive catalog.db   # sha256+md5+crc32
+
+# 直接扫描单个 ISO 文件（也会展开容器内部，无需目录包裹）
+offcat scan --containers --depth 2 movie.iso catalog.db
+```
+
+扫描选项：
+
+| 选项 | 说明 |
+|------|------|
+| `--containers` | 扫描并展开 ISO 容器（默认不展开） |
+| `--depth <N>` | 容器内目录最大递归深度（默认 1） |
+| `--sha256` / `--md5` / `--crc32` | 计算对应校验码 |
+| `--checksum` | 计算全部三种校验码 |
+| `--verbose` / `--debug` / `--quiet` | 日志级别 |
+
+扫描支持 Ctrl+C 取消：已扫描数据保留，Catalog 标记为 cancelled。
+
+### 3. 搜索
+
+```bash
 offcat search catalog.db install.wim
+```
+
+搜索结果包含 Source 名、完整路径；容器内的虚拟条目会标注
+`[container: iso] [virtual]`。ISO 内 Rock Ridge 符号链接也作为独立条目
+（类型 symlink）参与搜索。
+
+### 4. 查看统计
+
+```bash
 offcat info catalog.db
 ```
+
+显示 Sources / Entries / Containers 数量，以及每个 Source 的条目数。
+
+### Windows 注意事项
+
+- 扫描与校验码计算使用流式读取，无需管理员权限，不挂载 ISO。
+- 路径含空格时用引号包裹：`offcat scan "D:\My Archive" catalog.db`。
+- 扫描期间 Catalog 使用 WAL 模式；请勿并发复制/删除 `.db-wal` 文件，
+  以免丢失未 checkpoint 的数据。
 
 ## 文档
 

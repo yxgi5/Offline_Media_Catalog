@@ -95,6 +95,10 @@ public:
     // Translate partition-relative block to absolute sector
     int64_t partition_to_absolute(uint16_t partition_ref, int64_t block);
 
+    // Walk a directory given its ICB (recursion guard via `depth`)
+    bool read_directory(const UdfLongAd& icb, std::vector<UdfEntry>& out,
+                        int depth);
+
 private:
     std::string filepath_;
     void* file_handle_ = nullptr;
@@ -124,10 +128,6 @@ private:
     // Read allocation extent (possibly chained via Allocation Extent)
     bool read_allocation_extent(int64_t sector, int64_t length,
                                 std::vector<uint8_t>& out);
-
-    // Walk a directory given its ICB
-    bool read_directory(const UdfLongAd& icb, std::vector<UdfEntry>& out,
-                        int depth);
 };
 
 } // namespace offcat
