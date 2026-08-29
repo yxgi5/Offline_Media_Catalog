@@ -101,16 +101,24 @@ DecodedName decode_udf_name(const uint8_t* data, size_t length) {
 
     // Compression ID 16: CS0 with 16-bit characters (UTF-16BE)
     if (compression_id == 16) {
-        // Next byte is character count (bytes/2)
+        // UDF spec: data[1] is the character count and the characters
+        // follow at data[2].  genisoimage writes the same ID without
+        // the count (characters start at data[1]); detect it because a
+        // real count must be non-zero and fit in the remaining bytes.
+        const bool spec_format =
+            length >= 2 && data[1] > 0 &&
+            static_cast<size_t>(data[1]) * 2 <= length - 2;
+        size_t char_start = spec_format ? 2 : 1;
         size_t byte_length = 0;
-        if (length >= 2) {
-            size_t char_count = data[1];
-            byte_length = char_count * 2;
-            if (byte_length > length - 2) byte_length = length - 2;
+        if (spec_format) {
+            byte_length = static_cast<size_t>(data[1]) * 2;
+        } else {
+            byte_length = length - 1;
+            if (byte_length % 2 != 0) byte_length--;  // UTF-16BE units
         }
 
         std::string utf8;
-        if (decode_utf16be_to_utf8(data + 2, byte_length, utf8)) {
+        if (decode_utf16be_to_utf8(data + char_start, byte_length, utf8)) {
             result.utf8 = utf8;
             return result;
         }
@@ -124,7 +132,8 @@ DecodedName decode_udf_name(const uint8_t* data, size_t length) {
         std::string salvaged;
         size_t units = byte_length / 2;
         for (size_t i = 0; i < units; i++) {
-            uint16_t u = static_cast<uint16_t>(data[2 + i*2] << 8 | data[2 + i*2 + 1]);
+            uint16_t u = static_cast<uint16_t>(data[char_start + i*2] << 8 |
+                                               data[char_start + i*2 + 1]);
             if (u >= 0xD800 && u <= 0xDFFF) continue;  // skip lone surrogates
             append_utf8_codepoint(u, salvaged);
         }
@@ -134,19 +143,22 @@ DecodedName decode_udf_name(const uint8_t* data, size_t length) {
 
     // Compression ID 8: CS0 with 8-bit characters (usually Latin-1)
     if (compression_id == 8) {
-        size_t byte_length = 0;
-        if (length >= 2) {
-            size_t char_count = data[1];
-            byte_length = char_count;
-            if (byte_length > length - 2) byte_length = length - 2;
-        }
+        // UDF spec: data[1] is the character count.  genisoimage omits
+        // the count and starts characters at data[1]; a count that
+        // cannot fit in the remaining bytes signals that form.
+        const bool spec_format =
+            length >= 2 && data[1] > 0 &&
+            static_cast<size_t>(data[1]) <= length - 2;
+        size_t char_start = spec_format ? 2 : 1;
+        size_t byte_length = spec_format ? static_cast<size_t>(data[1])
+                                         : length - 1;
 
         // 8-bit CS0: characters 0x20-0x7E are ASCII, 0x80+ typically
         // Latin-1 or extended ASCII
         std::string out;
         out.reserve(byte_length);
         for (size_t i = 0; i < byte_length; i++) {
-            uint8_t c = data[2 + i];
+            uint8_t c = data[char_start + i];
             if (c < 0x80) {
                 out.push_back(static_cast<char>(c));
             } else {

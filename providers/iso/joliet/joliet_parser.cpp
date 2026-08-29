@@ -1,5 +1,6 @@
 #include "joliet_parser.h"
 #include "../udf/udf_unicode.h"
+#include "platform/file_util.h"
 #include <cstdio>
 #include <cstring>
 
@@ -29,14 +30,14 @@ bool JolietParser::read_sector(int64_t sector, uint8_t* buffer, size_t count) {
     FILE* f = static_cast<FILE*>(file_handle_);
     if (!f) return false;
 
-    if (std::fseek(f, static_cast<long>(sector * ISO_SECTOR_SIZE), SEEK_SET) != 0) {
+    if (fseek_64(f, sector * ISO_SECTOR_SIZE, SEEK_SET) != 0) {
         return false;
     }
     return std::fread(buffer, ISO_SECTOR_SIZE, count, f) == count;
 }
 
 bool JolietParser::open() {
-    FILE* f = std::fopen(filepath_.c_str(), "rb");
+    FILE* f = open_file_utf8(filepath_, "rb");
     if (!f) return false;
     file_handle_ = f;
 

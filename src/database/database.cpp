@@ -154,13 +154,39 @@ Result<bool> Database::initialize_schema() {
         return Error{rc, "Failed to create schema: " + msg};
     }
 
-    // Create FTS5 virtual table (separate because it uses different syntax)
+    // FTS5 virtual table.  Uses a regular (content-storing) table so rows
+    // can be deleted by rowid — contentless tables (content='') reject
+    // DELETE, which is required when a source is replaced.  Older catalogs
+    // created the contentless variant; migrate them by dropping the index
+    // and rebuilding it from the entry table.
+    bool fts_migrated = false;
+    {
+        Statement stmt(*this, "SELECT sql FROM sqlite_master "
+                             "WHERE type = 'table' AND name = 'entry_fts'");
+        if (stmt.is_valid() && stmt.step()) {
+            std::string sql = stmt.column_text(0);
+            fts_migrated =
+                sql.find("content=''") != std::string::npos ||
+                sql.find("content = ''") != std::string::npos;
+        }
+    }
+    if (fts_migrated) {
+        // The SELECT statement above must be finalized (out of scope)
+        // before dropping, otherwise the schema is locked.
+        rc = sqlite3_exec(db_, "DROP TABLE entry_fts;",
+                          nullptr, nullptr, &errmsg);
+        if (rc != SQLITE_OK) {
+            std::string msg = errmsg ? errmsg : "unknown error";
+            sqlite3_free(errmsg);
+            return Error{rc, "Failed to migrate FTS table: " + msg};
+        }
+    }
+
     const char* fts_sql = R"SQL(
         CREATE VIRTUAL TABLE IF NOT EXISTS entry_fts USING fts5(
             name,
             path,
             source_name,
-            content='',
             tokenize='unicode61'
         );
     )SQL";
@@ -170,6 +196,29 @@ Result<bool> Database::initialize_schema() {
         std::string msg = errmsg ? errmsg : "unknown error";
         sqlite3_free(errmsg);
         return Error{rc, "Failed to create FTS5 table: " + msg};
+    }
+
+    // Rebuild the index after migrating away from the contentless table.
+    if (fts_migrated) {
+        const char* rebuild_sql = R"SQL(
+            WITH RECURSIVE entry_path(id, path) AS (
+                SELECT id, name FROM entry WHERE parent_id IS NULL
+                UNION ALL
+                SELECT e.id, p.path || '/' || e.name
+                FROM entry e JOIN entry_path p ON e.parent_id = p.id
+            )
+            INSERT INTO entry_fts(rowid, name, path, source_name)
+            SELECT e.id, e.name, p.path, s.name
+            FROM entry e
+            JOIN entry_path p ON p.id = e.id
+            JOIN source s ON s.id = e.source_id;
+        )SQL";
+        rc = sqlite3_exec(db_, rebuild_sql, nullptr, nullptr, &errmsg);
+        if (rc != SQLITE_OK) {
+            std::string msg = errmsg ? errmsg : "unknown error";
+            sqlite3_free(errmsg);
+            return Error{rc, "Failed to rebuild FTS index: " + msg};
+        }
     }
 
     // Schema version tracking

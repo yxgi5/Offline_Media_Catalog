@@ -137,6 +137,20 @@ void walk_udf_directory(const std::vector<UdfEntry>& entries,
         ed.size = e.size;
         ed.mtime = e.mtime;
 
+        // genisoimage images write a constant 2048 in the FID ICB
+        // extent length; the real size lives in the file entry.
+        if (!e.is_directory) {
+            int64_t extent = 0, file_size = 0, file_mtime = 0;
+            bool file_is_dir = false;
+            std::vector<UdfLongAd> ads;
+            if (udf.read_file_entry(e.extent_location, e.partition_ref,
+                                    extent, file_size, file_is_dir,
+                                    file_mtime, ads) &&
+                file_size > 0) {
+                ed.size = file_size;
+            }
+        }
+
         auto result = writer.add_entry(ed);
         if (is_err(result)) {
             LOG_WARN("UDF: failed to insert entry: " + e.name);

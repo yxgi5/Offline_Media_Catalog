@@ -16,6 +16,13 @@ public:
     Result<std::vector<SourceData>> get_all();
     Result<int64_t> count();
 
+    // Find a source by its scan path (tolerates trailing separators)
+    Result<int64_t> find_by_path(const std::string& source_path);
+
+    // Remove a source and all its data (entries, containers, checksums,
+    // FTS rows, scan records).  Must be called inside a transaction.
+    Result<bool> remove_tree(int64_t source_id);
+
 private:
     Database& db_;
 };
@@ -39,6 +46,10 @@ public:
     // FTS index management
     Result<bool> insert_fts(int64_t entry_id, const std::string& name,
                             const std::string& path, const std::string& source_name);
+
+    // Merge FTS segments so tombstones left by replaced scans do not
+    // accumulate.  Cheap; call after a scan has been committed.
+    Result<bool> optimize_fts();
 
 private:
     Database& db_;

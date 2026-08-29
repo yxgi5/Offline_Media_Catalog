@@ -125,6 +125,11 @@ private:
     bool parse_fsd(const uint8_t* desc, size_t size);
     bool parse_partition_maps(const uint8_t* data, size_t length);
 
+    // Fallback for genisoimage-style images whose LVD/PD pointers are
+    // garbage: rebase partition 0 on the FSD sector found right after
+    // the anchor and use the first directory FE as the root.
+    bool locate_root_in_head(std::vector<UdfEntry>& out);
+
     // Read allocation extent (possibly chained via Allocation Extent)
     bool read_allocation_extent(int64_t sector, int64_t length,
                                 std::vector<uint8_t>& out);
