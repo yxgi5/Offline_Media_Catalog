@@ -1,6 +1,7 @@
 #include "udf_parser.h"
 #include "udf_unicode.h"
 #include "core/logger.h"
+#include "platform/file_util.h"
 #include <cstdio>
 #include <cstring>
 #include <ctime>
@@ -123,7 +124,7 @@ bool UdfParser::read_descriptor(int64_t sector, uint16_t expected_tag,
 }
 
 bool UdfParser::open() {
-    FILE* f = std::fopen(filepath_.c_str(), "rb");
+    FILE* f = open_file_utf8(filepath_, "rb");
     if (!f) return false;
     file_handle_ = f;
     return parse_anchor();

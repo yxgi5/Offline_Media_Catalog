@@ -1,4 +1,5 @@
 #include "iso9660_parser.h"
+#include "platform/file_util.h"
 #include <cstdio>
 #include <cstring>
 #include <ctime>
@@ -253,7 +254,7 @@ Iso9660Parser::~Iso9660Parser() {
 }
 
 bool Iso9660Parser::open() {
-    FILE* f = std::fopen(filepath_.c_str(), "rb");
+    FILE* f = open_file_utf8(filepath_, "rb");
     if (!f) return false;
     file_handle_ = f;
 
