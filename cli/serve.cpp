@@ -508,7 +508,7 @@ function mkNode(e) {
   const li = document.createElement("li");
   const div = document.createElement("div");
   div.className = "node";
-  div.innerHTML = '<span class="twist">' + (e.is_dir ? "▸" : "") + "</span>" +
+  div.innerHTML = '<span class="twist">' + (e.is_dir || e.is_container ? "▸" : "") + "</span>" +
                   '<span class="icon">' + iconFor(e.type, e.is_virtual) + "</span>" +
                   '<span class="f-' + e.type + '">' + escapeHtml(e.name) + "</span>" +
                   (e.is_virtual ? '<span class="tag v">virtual</span>' : "") +
@@ -516,7 +516,7 @@ function mkNode(e) {
   div.addEventListener("click", async (ev) => {
     ev.stopPropagation();
     selectNode(div, e);
-    if (e.is_dir && !loaded.has(e.id)) {
+    if ((e.is_dir || e.is_container) && !loaded.has(e.id)) {
       loaded.add(e.id);
       const ul = document.createElement("ul");
       ul.className = "tree";
@@ -526,7 +526,7 @@ function mkNode(e) {
         for (const k of kids) ul.appendChild(mkNode(k));
         div.querySelector(".twist").textContent = kids.length ? "▾" : "";
       } catch (err) { ul.innerHTML = '<li class="err">加载失败</li>'; }
-    } else if (e.is_dir) {
+    } else if (e.is_dir || e.is_container) {
       const twist = div.querySelector(".twist");
       const ul = li.querySelector("ul");
       if (ul) {
