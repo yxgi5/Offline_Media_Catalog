@@ -18,6 +18,9 @@ Joliet 提供 Unicode 名称；ISO9660 提供基础兼容。
 Rock Ridge 不是独立的文件系统，而是附加在 ISO9660 目录记录上的
 属性（SUSP 区）；仅在 ISO9660 树解析时生效（Joliet 树不带 RR）。
 
+> 已知限制：检测到的 filesystem 集合（spec 的 available_filesystems）
+> 当前未记录到数据库，只有最终选用的解析器体现在日志中。
+
 ## Rock Ridge (SUSP/RRIP)
 
 ISO9660 目录记录尾部可带 SUSP 区（System Use Area），RRIP 在其上定义
@@ -84,6 +87,10 @@ heuristic recovery
 - `name_encoding = udf-cs0`，`name_confidence = 100`（严格解析）
 - `name_encoding = compatibility`，`name_confidence = 80`（容错）
 - `name_encoding = heuristic`，`name_confidence = 40`（启发式恢复）
+
+> 已知限制：上述解析方式元数据（name_encoding / name_confidence）
+> 目前仅在解析过程中生效，尚未持久化到数据库（entry 表无对应列，
+> 见 catalog-schema.md 预留字段），无法事后追溯单个条目的解析方式。
 
 ## 非标准 UDF
 

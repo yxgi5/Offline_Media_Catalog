@@ -87,3 +87,17 @@ ContainerOptions.max_depth 传递；UDF 解析器内部另有深度上限 64
 - 单文件读取失败 → 记录 warning，继续扫描
 - Container 损坏 → 记录 error，继续扫描其他文件
 - 取消 → 停止后续扫描，事务正确结束，已完成数据保留
+
+## 已知限制与未验证项
+
+与 spec 完成标准的差距，如实记录：
+
+| 条目 | 状态 | 说明 |
+|------|------|------|
+| Linux / macOS 构建 | 未验证 | 代码无平台依赖（平台逻辑集中在 src/platform/），但仅 Windows/MinGW 实测过，无 CI |
+| million-entry 测试 | 未实现 | 无百万级条目规模/性能测试；最大真实验证为单镜像 5k+ 条目 |
+| name_encoding / name_confidence 持久化 | 未实现 | 三级容错解析已实现，但解析方式元数据未入库（见 catalog-schema.md 预留字段） |
+| available_filesystems 记录 | 未实现 | 多文件系统回退已实现，检测到的文件系统集合未记录（见 catalog-schema.md） |
+| fingerprint 预留 API | 未预留 | spec 允许 Phase 1 不实现，当前无任何指纹相关接口 |
+
+以上条目不阻塞 Phase 1 核心功能（扫描/搜索/ISO 展开/校验码），属于后续补齐项。

@@ -30,6 +30,10 @@
   也可放入 `third_party/` 实现离线构建（`third_party/sqlite-amalgamation-3460100/`、
   `third_party/googletest/`）
 
+> 平台状态：Windows（MinGW-w64）已实测通过；Linux / macOS 代码已做平台隔离
+> （平台逻辑集中在 `src/platform/`、无 Win32 依赖），但尚未经 CI 验证。
+> 详见 [架构文档 - 已知限制](docs/architecture.md)。
+
 ### 步骤
 
 ```bash

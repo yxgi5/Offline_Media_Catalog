@@ -86,3 +86,17 @@ entry_fts(name, path, source_name)
 - idx_container_entry (entry_id)
 - idx_checksum_entry (entry_id)
 - idx_scan_source (source_id)
+
+## 预留字段（未实现）
+
+以下字段在 spec 中有要求或预留，但当前版本**未实现**，加表/加列不会
+破坏既有数据（通过 ALTER TABLE ADD COLUMN 或新扩展表引入）：
+
+| 归属 | 字段 | spec 来源 | 用途 |
+|------|------|-----------|------|
+| entry | name_encoding | §21 | UDF 文件名解析方式（udf-cs0 / compatibility / heuristic） |
+| entry | name_confidence | §21 | 解析置信度（100 / 80 / 40） |
+| container | available_filesystems | §22 | 镜像内检测到的全部文件系统（UDF/Joliet/ISO9660 等） |
+| 独立表/列 | fingerprint | §24 | 轻量指纹（size + fast fingerprint + optional SHA-256 多级验证） |
+
+设计约束：这些字段必须允许 NULL；不得作为 Entry 身份的一部分。
