@@ -47,6 +47,10 @@ public:
     Result<bool> insert_fts(int64_t entry_id, const std::string& name,
                             const std::string& path, const std::string& source_name);
 
+    // Merge FTS segments so tombstones left by replaced scans do not
+    // accumulate.  Cheap; call after a scan has been committed.
+    Result<bool> optimize_fts();
+
 private:
     Database& db_;
 };

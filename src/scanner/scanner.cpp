@@ -190,6 +190,20 @@ Result<int64_t> Scanner::scan_source(const std::string& path,
         LOG_WARN("Transaction commit issue, attempting to preserve data");
     }
 
+    // Merge FTS segments so tombstones left by replaced scans do not
+    // accumulate and the index stays compact across rescans.
+    auto opt_result = entry_mgr_.optimize_fts();
+    if (is_err(opt_result)) {
+        LOG_WARN("FTS optimize failed: " + get_err(opt_result).message);
+    }
+
+    // Rebuild the database file so pages freed by the merge are
+    // physically returned; keeps the file size stable across rescans.
+    auto vacuum_result = db_.execute("VACUUM;");
+    if (is_err(vacuum_result)) {
+        LOG_WARN("VACUUM failed: " + get_err(vacuum_result).message);
+    }
+
     // Determine final status
     ScanStatus final_status = cancel_.is_cancelled()
         ? ScanStatus::Cancelled : ScanStatus::Completed;

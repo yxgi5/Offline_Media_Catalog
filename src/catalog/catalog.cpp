@@ -362,6 +362,15 @@ Result<bool> EntryManager::insert_fts(int64_t entry_id, const std::string& name,
     return true;
 }
 
+Result<bool> EntryManager::optimize_fts() {
+    auto result = db_.execute("INSERT INTO entry_fts(entry_fts) VALUES('optimize');");
+    if (is_err(result)) {
+        return Error{1, "Failed to optimize FTS index: " +
+                        get_err(result).message};
+    }
+    return true;
+}
+
 // ── ContainerManager ────────────────────────────────────────────────
 
 ContainerManager::ContainerManager(Database& db) : db_(db) {}

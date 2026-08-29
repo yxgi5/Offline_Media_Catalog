@@ -404,6 +404,38 @@ TEST(ScanManagerTest, InsertAndFinish) {
     std::filesystem::remove(path + "-shm");
 }
 
+TEST(DatabaseTest, OptimizeFts) {
+    std::string path = temp_db_path("offcat_test_ftsopt.db");
+    std::filesystem::remove(path);
+
+    Database db;
+    ASSERT_TRUE(is_ok(db.create(path)));
+
+    // Seed a source, one entry and its FTS row.
+    ASSERT_TRUE(is_ok(db.execute(
+        "INSERT INTO source (id, name, type) VALUES (1, 'SRC', 'Directory');"
+        "INSERT INTO entry (id, source_id, parent_id, name, type) VALUES"
+        " (1, 1, NULL, 'alpha.txt', 1), (2, 1, 1, 'beta.txt', 1);"
+        "INSERT INTO entry_fts(rowid, name, path, source_name) VALUES"
+        " (1, 'alpha.txt', 'alpha.txt', 'SRC'),"
+        " (2, 'beta.txt', 'alpha.txt/beta.txt', 'SRC');")));
+
+    // optimize must succeed and keep all index rows.
+    EntryManager em(db);
+    ASSERT_TRUE(is_ok(em.optimize_fts()));
+    {
+        Statement stmt(db, "SELECT COUNT(*) FROM entry_fts");
+        ASSERT_TRUE(stmt.is_valid());
+        ASSERT_TRUE(stmt.step());
+        EXPECT_EQ(stmt.column_int64(0), 2);
+    }
+
+    db.close();
+    std::filesystem::remove(path);
+    std::filesystem::remove(path + "-wal");
+    std::filesystem::remove(path + "-shm");
+}
+
 TEST(DatabaseTest, MigratesContentlessFts) {
     std::string path = temp_db_path("offcat_test_ftsmig.db");
     std::filesystem::remove(path);
