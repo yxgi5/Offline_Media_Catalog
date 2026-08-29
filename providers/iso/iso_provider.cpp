@@ -11,6 +11,22 @@
 
 namespace offcat {
 
+namespace {
+
+// Rock Ridge extended attributes move deep directories into /rr_moved
+// and leave a single-byte placeholder (0x00, 0x01, ...) in the original
+// location.  We do not parse RR attributes, so names containing control
+// characters are skipped rather than catalogued as garbage.
+bool valid_iso_name(const std::string& name) {
+    if (name.empty()) return false;
+    for (unsigned char c : name) {
+        if (c < 0x20) return false;
+    }
+    return true;
+}
+
+} // namespace
+
 // ── Extension check ─────────────────────────────────────────────────
 
 bool IsoProvider::has_iso_extension(const std::string& filepath) {
@@ -81,13 +97,19 @@ bool IsoProvider::scan(int64_t container_entry_id,
         filepath += rel_path;
     }
 
-    // Try UDF first, then ISO9660 (with Joliet)
+    // Try UDF first, then ISO9660 (with Joliet).  Broken or non-standard
+    // images may have a damaged UDF volume yet a readable ISO9660 tree
+    // (e.g. hybrid discs), so fall back instead of giving up.
     UdfParser udf(filepath);
     if (udf.open()) {
         LOG_VERBOSE("Detected UDF: " + filepath);
         LOG_VERBOSE("Volume Identifier: " + udf.volume_identifier());
         LOG_VERBOSE("Filesystem: " + udf.filesystem_type());
-        return scan_udf(filepath, entry.source_id, container_entry_id, db, options);
+        if (scan_udf(filepath, entry.source_id, container_entry_id, db, options)) {
+            return true;
+        }
+        LOG_WARN("UDF parse failed for " + filepath +
+                 ", falling back to ISO9660");
     }
 
     Iso9660Parser iso(filepath);
@@ -118,23 +140,25 @@ bool IsoProvider::scan_udf(const std::string& filepath, int64_t source_id,
         return false;
     }
 
-    EntryManager entry_mgr(db);
-    ContainerManager container_mgr(db);
+    VirtualTreeWriter writer(db, source_id, container_entry_id);
 
     LOG_VERBOSE("UDF entry count: " + std::to_string(root_entries.size()));
 
     // Write virtual entries for the root directory
     for (const auto& e : root_entries) {
+        if (!valid_iso_name(e.name)) {
+            LOG_VERBOSE("UDF: skipping entry with invalid name (len=" +
+                        std::to_string(e.name.size()) + ")");
+            continue;
+        }
         EntryData ed;
-        ed.source_id = source_id;
         ed.parent_id = container_entry_id;
         ed.name = e.name;
         ed.type = e.is_directory ? EntryType::Directory : EntryType::File;
         ed.size = e.size;
         ed.mtime = e.mtime;
-        ed.is_virtual = true;
 
-        auto result = entry_mgr.insert(ed);
+        auto result = writer.add_entry(ed);
         if (is_err(result)) {
             LOG_WARN("UDF: failed to insert entry: " + e.name);
             continue;
@@ -149,7 +173,7 @@ bool IsoProvider::scan_udf(const std::string& filepath, int64_t source_id,
 bool IsoProvider::scan_iso9660(const std::string& filepath, int64_t source_id,
                                int64_t container_entry_id, Database& db,
                                const ContainerOptions& options) {
-    EntryManager entry_mgr(db);
+    VirtualTreeWriter writer(db, source_id, container_entry_id);
 
     // Prefer Joliet for names when present
     JolietParser joliet(filepath);
@@ -163,16 +187,19 @@ bool IsoProvider::scan_iso9660(const std::string& filepath, int64_t source_id,
         LOG_VERBOSE("Joliet entry count: " + std::to_string(root_entries.size()));
 
         for (const auto& e : root_entries) {
+            if (!valid_iso_name(e.name)) {
+                LOG_VERBOSE("Joliet: skipping entry with invalid name (len=" +
+                            std::to_string(e.name.size()) + ")");
+                continue;
+            }
             EntryData ed;
-            ed.source_id = source_id;
             ed.parent_id = container_entry_id;
             ed.name = e.name;
             ed.type = e.is_directory ? EntryType::Directory : EntryType::File;
             ed.size = e.size;
             ed.mtime = e.mtime;
-            ed.is_virtual = true;
 
-            auto result = entry_mgr.insert(ed);
+            auto result = writer.add_entry(ed);
             if (is_err(result)) {
                 LOG_WARN("Joliet: failed to insert entry: " + e.name);
             }
@@ -193,16 +220,19 @@ bool IsoProvider::scan_iso9660(const std::string& filepath, int64_t source_id,
     LOG_VERBOSE("ISO9660 entry count: " + std::to_string(root_entries.size()));
 
     for (const auto& e : root_entries) {
+        if (!valid_iso_name(e.name)) {
+            LOG_VERBOSE("ISO9660: skipping entry with invalid name (len=" +
+                        std::to_string(e.name.size()) + ")");
+            continue;
+        }
         EntryData ed;
-        ed.source_id = source_id;
         ed.parent_id = container_entry_id;
         ed.name = e.name;
         ed.type = e.is_directory ? EntryType::Directory : EntryType::File;
         ed.size = e.size;
         ed.mtime = e.mtime;
-        ed.is_virtual = true;
 
-        auto result = entry_mgr.insert(ed);
+        auto result = writer.add_entry(ed);
         if (is_err(result)) {
             LOG_WARN("ISO9660: failed to insert entry: " + e.name);
         }

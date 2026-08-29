@@ -1,5 +1,6 @@
 #include "udf_parser.h"
 #include "udf_unicode.h"
+#include "core/logger.h"
 #include <cstdio>
 #include <cstring>
 #include <ctime>
@@ -496,7 +497,25 @@ bool UdfParser::read_root_directory(std::vector<UdfEntry>& out) {
     }
 
     int64_t abs_fsd = partition_to_absolute(fsd_partition_, fsd_location_);
-    if (abs_fsd < 0) return false;
+    if (abs_fsd < 0) {
+        LOG_VERBOSE("UDF: FSD partition " + std::to_string(fsd_partition_) +
+                    " not in partition map (" + std::to_string(partition_starts_.size()) +
+                    " partitions)");
+        return false;
+    }
+
+    // Diagnose what is actually at the FSD location so broken images can
+    // be reported usefully instead of failing silently
+    UdfTag fsd_tag;
+    if (read_tag(abs_fsd, fsd_tag)) {
+        if (fsd_tag.identifier != TAG_FSD) {
+            LOG_VERBOSE("UDF: expected FSD (tag " + std::to_string(TAG_FSD) +
+                        ") at sector " + std::to_string(abs_fsd) + " but found tag " +
+                        std::to_string(fsd_tag.identifier));
+        }
+    } else {
+        LOG_VERBOSE("UDF: cannot read tag at FSD sector " + std::to_string(abs_fsd));
+    }
 
     uint8_t desc[UDF_SECTOR_SIZE];
     if (!read_descriptor(abs_fsd, TAG_FSD, desc, sizeof(desc))) return false;
