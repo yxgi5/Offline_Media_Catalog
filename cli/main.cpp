@@ -21,6 +21,11 @@ namespace offcat {
 void register_iso_provider();
 }
 
+// Read-only web viewer (defined in cli/serve.cpp)
+namespace offcat {
+int cmd_serve(const std::vector<std::string>& args);
+}
+
 using namespace offcat;
 
 static CancellationManager g_cancel;
@@ -40,6 +45,7 @@ static void print_usage(const char* prog) {
         "  " << prog << " scan [options] <path> <catalog.db>     Scan a source into the catalog\n"
         "  " << prog << " search <catalog.db> <query>            Search filenames/paths\n"
         "  " << prog << " info <catalog.db>                      Show catalog statistics\n"
+        "  " << prog << " serve [--port <N>] <catalog.db>        Read-only web viewer (default port 8080)\n"
         "\n"
         "Scan options:\n"
         "  --containers      Scan and expand ISO containers\n"
@@ -297,6 +303,8 @@ int main(int argc, char* argv[]) {
         return cmd_search(args);
     } else if (command == "info") {
         return cmd_info(args);
+    } else if (command == "serve") {
+        return cmd_serve(args);
     } else if (command == "help" || command == "--help" || command == "-h") {
         print_usage(argv[0]);
         return 0;

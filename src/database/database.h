@@ -19,6 +19,8 @@ public:
     // Open or create a catalog database
     Result<bool> open(const std::string& path);
     Result<bool> create(const std::string& path);
+    // Open strictly read-only (safe for viewers; never creates the file)
+    Result<bool> open_readonly(const std::string& path);
     void close();
 
     bool is_open() const;

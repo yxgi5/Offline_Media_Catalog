@@ -101,8 +101,14 @@ target_include_directories(offcat_providers PUBLIC
 target_link_libraries(offcat_providers PUBLIC offcat_core)
 
 # ── offcat (CLI executable) ─────────────────────────────────────────
-add_executable(offcat cli/main.cpp)
+add_executable(offcat
+    cli/main.cpp
+    cli/serve.cpp
+)
 target_link_libraries(offcat PRIVATE offcat_core offcat_providers)
+if(WIN32)
+    target_link_libraries(offcat PRIVATE ws2_32)
+endif()
 
 # ── Tests ────────────────────────────────────────────────────────────
 if(OFFCAT_BUILD_TESTS)

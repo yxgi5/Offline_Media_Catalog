@@ -44,6 +44,23 @@ Result<bool> Database::create(const std::string& path) {
     return initialize_schema();
 }
 
+Result<bool> Database::open_readonly(const std::string& path) {
+    if (db_) {
+        close();
+    }
+    int rc = sqlite3_open_v2(path.c_str(), &db_, SQLITE_OPEN_READONLY, nullptr);
+    if (rc != SQLITE_OK) {
+        std::string msg = db_ ? sqlite3_errmsg(db_) : "unknown";
+        sqlite3_close(db_);
+        db_ = nullptr;
+        return Error{rc, "Failed to open database read-only: " + msg};
+    }
+    // WAL databases need the shared-memory file even for readers;
+    // query_only guards against accidental writes via raw handles.
+    execute("PRAGMA query_only = ON;");
+    return true;
+}
+
 void Database::close() {
     if (db_) {
         sqlite3_close_v2(db_);
