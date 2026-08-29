@@ -1,0 +1,18 @@
+# Build output
+build/
+
+# SQLite amalgamation extracted copy (the .zip in third_party is tracked
+# so offline builds stay reproducible)
+third_party/sqlite-amalgamation-3460100/
+
+# Runtime artifacts
+*.db
+*.db-wal
+*.db-shm
+*.log
+
+# Editor / OS noise
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini
