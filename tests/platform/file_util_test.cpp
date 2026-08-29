@@ -165,3 +165,33 @@ TEST(FileUtilTest, IsoParserOpensChinesePath) {
     ASSERT_TRUE(parser.read_root_directory(entries));
     EXPECT_TRUE(entries.empty());  // only "." and "..", which are filtered
 }
+
+// Windows `long` is 32-bit, so std::fseek() cannot reach offsets beyond
+// 2 GiB; ISO images in the wild routinely exceed that (this project's
+// test set includes a 4.6 GiB image).  The 64-bit helper must round-trip
+// a sparse file at 3 GiB.
+TEST(FileUtilTest, SeekBeyond2GiB) {
+    const auto file = test_dir() / "big_sparse.bin";
+    std::filesystem::create_directories(test_dir());
+    constexpr int64_t kTailOff = int64_t(3) * 1024 * 1024 * 1024 - 4;
+
+    {
+        FILE* f = open_file_utf8(file.string(), "wb");
+        ASSERT_NE(f, nullptr);
+        ASSERT_EQ(fseek_64(f, kTailOff, SEEK_SET), 0);
+        ASSERT_EQ(std::fwrite("TAIL", 1, 4, f), 4u);
+        std::fclose(f);
+    }
+
+    {
+        FILE* f = open_file_utf8(file.string(), "rb");
+        ASSERT_NE(f, nullptr);
+        ASSERT_EQ(fseek_64(f, kTailOff, SEEK_SET), 0);
+        char buf[8] = {0};
+        ASSERT_EQ(std::fread(buf, 1, 4, f), 4u);
+        EXPECT_EQ(std::string(buf, 4), "TAIL");
+        std::fclose(f);
+    }
+
+    std::filesystem::remove(file);
+}

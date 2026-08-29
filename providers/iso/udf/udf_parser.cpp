@@ -92,7 +92,7 @@ UdfParser::~UdfParser() {
 bool UdfParser::read_sector(int64_t sector, uint8_t* buffer, size_t count) {
     FILE* f = static_cast<FILE*>(file_handle_);
     if (!f) return false;
-    if (std::fseek(f, static_cast<long>(sector * UDF_SECTOR_SIZE), SEEK_SET) != 0) {
+    if (fseek_64(f, sector * UDF_SECTOR_SIZE, SEEK_SET) != 0) {
         return false;
     }
     return std::fread(buffer, UDF_SECTOR_SIZE, count, f) == count;
@@ -102,7 +102,7 @@ bool UdfParser::read_tag(int64_t sector, UdfTag& tag) {
     uint8_t data[16];
     FILE* f = static_cast<FILE*>(file_handle_);
     if (!f) return false;
-    if (std::fseek(f, static_cast<long>(sector * UDF_SECTOR_SIZE), SEEK_SET) != 0) {
+    if (fseek_64(f, sector * UDF_SECTOR_SIZE, SEEK_SET) != 0) {
         return false;
     }
     if (std::fread(data, 1, 16, f) != 16) return false;
@@ -116,7 +116,7 @@ bool UdfParser::read_descriptor(int64_t sector, uint16_t expected_tag,
     if (tag.identifier != expected_tag) return false;
 
     FILE* f = static_cast<FILE*>(file_handle_);
-    if (std::fseek(f, static_cast<long>(sector * UDF_SECTOR_SIZE), SEEK_SET) != 0) {
+    if (fseek_64(f, sector * UDF_SECTOR_SIZE, SEEK_SET) != 0) {
         return false;
     }
     size_t to_read = size < UDF_SECTOR_SIZE ? size : UDF_SECTOR_SIZE;
@@ -272,6 +272,28 @@ bool UdfParser::parse_partition_maps(const uint8_t* data, size_t length) {
     return true;
 }
 
+// Parse allocation descriptors (ECMA-167 3/7.2).  Standard images use
+// 16-byte long_ad records; genisoimage-style images use 8-byte short_ad
+// records (their len_alloc is 8).  Distinguish by alignment: long_ad
+// records always come in 16-byte multiples, short_ad in 8-byte ones.
+static void parse_allocation_descriptors(const uint8_t* data,
+                                         uint32_t len_alloc,
+                                         std::vector<UdfLongAd>& ads) {
+    size_t ad_size = (len_alloc % 16 == 0) ? 16 : 8;
+    size_t alloc_end = len_alloc;
+    if (alloc_end > UDF_SECTOR_SIZE) alloc_end = UDF_SECTOR_SIZE;
+
+    size_t pos = 0;
+    while (pos + ad_size <= alloc_end) {
+        UdfLongAd ad;
+        ad.extent_length = u32le(data + pos) & 0x3FFFFFFF;
+        ad.location = u32le(data + pos + 4);
+        ad.partition_ref = (ad_size == 16) ? u16le(data + pos + 8) : 0;
+        ads.push_back(ad);
+        pos += ad_size;
+    }
+}
+
 bool UdfParser::read_file_entry(int64_t block, uint16_t partition_ref,
                                 int64_t& extent, int64_t& size,
                                 bool& is_directory, int64_t& mtime,
@@ -301,22 +323,9 @@ bool UdfParser::read_file_entry(int64_t block, uint16_t partition_ref,
         // len_ext_attr(4) len_alloc_desc(4)
         size = static_cast<int64_t>(u64le(desc + 56));
         mtime = parse_udf_timestamp(desc + 84);
-        if (size < 176) return false;
         uint32_t len_alloc = u32le(desc + 172);
-        size_t alloc_start = 176;
-        size_t alloc_end = alloc_start + len_alloc;
-        if (alloc_end > UDF_SECTOR_SIZE) alloc_end = UDF_SECTOR_SIZE;
-
         ads.clear();
-        size_t pos = alloc_start;
-        while (pos + 16 <= alloc_end) {
-            UdfLongAd ad;
-            ad.extent_length = u32le(desc + pos) & 0x3FFFFFFF;
-            ad.location = u32le(desc + pos + 4);
-            ad.partition_ref = u16le(desc + pos + 8);
-            ads.push_back(ad);
-            pos += 16;
-        }
+        parse_allocation_descriptors(desc + 176, len_alloc, ads);
     } else {
         // TAG_EFE: Extended File Entry (ECMA-167 4/14.10):
         // Same as FE up to information_length(56), then object_size(8)
@@ -326,22 +335,9 @@ bool UdfParser::read_file_entry(int64_t block, uint16_t partition_ref,
         // len_ext_attr(4) len_alloc_desc(4)
         size = static_cast<int64_t>(u64le(desc + 56));
         mtime = parse_udf_timestamp(desc + 84);
-        if (size < 200) return false;
         uint32_t len_alloc = u32le(desc + 196);
-        size_t alloc_start = 200;
-        size_t alloc_end = alloc_start + len_alloc;
-        if (alloc_end > UDF_SECTOR_SIZE) alloc_end = UDF_SECTOR_SIZE;
-
         ads.clear();
-        size_t pos = alloc_start;
-        while (pos + 16 <= alloc_end) {
-            UdfLongAd ad;
-            ad.extent_length = u32le(desc + pos) & 0x3FFFFFFF;
-            ad.location = u32le(desc + pos + 4);
-            ad.partition_ref = u16le(desc + pos + 8);
-            ads.push_back(ad);
-            pos += 16;
-        }
+        parse_allocation_descriptors(desc + 200, len_alloc, ads);
     }
 
     // First allocation descriptor is the file extent
@@ -488,46 +484,85 @@ bool UdfParser::read_root_directory(std::vector<UdfEntry>& out) {
     // abstract_id(32) root_directory_icb(16)
     // Root ICB long_ad at offset 408
 
-    if (fsd_location_ == 0) {
-        // FSD location must come from the LVD partition maps;
-        // default to partition 0 start if unknown
-        if (partition_starts_.empty()) return false;
-        fsd_partition_ = 0;
-        fsd_location_ = 0;  // Not known — cannot locate FSD
-        return false;
-    }
+    if (fsd_location_ != 0) {
+        // Standard path: FSD located via the LVD logical volume
+        // contents use long_ad.
+        int64_t abs_fsd = partition_to_absolute(fsd_partition_, fsd_location_);
+        if (abs_fsd >= 0) {
+            UdfTag fsd_tag;
+            if (read_tag(abs_fsd, fsd_tag) && fsd_tag.identifier == TAG_FSD) {
+                uint8_t desc[UDF_SECTOR_SIZE];
+                if (read_descriptor(abs_fsd, TAG_FSD, desc, sizeof(desc))) {
+                    // Root directory ICB (long_ad)
+                    UdfLongAd root_icb;
+                    root_icb.extent_length = u32le(desc + 408);
+                    root_icb.location = u32le(desc + 412);
+                    root_icb.partition_ref = u16le(desc + 416);
 
-    int64_t abs_fsd = partition_to_absolute(fsd_partition_, fsd_location_);
-    if (abs_fsd < 0) {
-        LOG_VERBOSE("UDF: FSD partition " + std::to_string(fsd_partition_) +
-                    " not in partition map (" + std::to_string(partition_starts_.size()) +
-                    " partitions)");
-        return false;
-    }
-
-    // Diagnose what is actually at the FSD location so broken images can
-    // be reported usefully instead of failing silently
-    UdfTag fsd_tag;
-    if (read_tag(abs_fsd, fsd_tag)) {
-        if (fsd_tag.identifier != TAG_FSD) {
-            LOG_VERBOSE("UDF: expected FSD (tag " + std::to_string(TAG_FSD) +
-                        ") at sector " + std::to_string(abs_fsd) + " but found tag " +
-                        std::to_string(fsd_tag.identifier));
+                    if (root_icb.extent_length != 0 && root_icb.location != 0 &&
+                        read_directory(root_icb, out, 0)) {
+                        return true;
+                    }
+                }
+            } else {
+                LOG_VERBOSE("UDF: expected FSD (tag " + std::to_string(TAG_FSD) +
+                            ") at sector " + std::to_string(abs_fsd) +
+                            " but found tag " + std::to_string(fsd_tag.identifier));
+            }
         }
-    } else {
-        LOG_VERBOSE("UDF: cannot read tag at FSD sector " + std::to_string(abs_fsd));
     }
 
-    uint8_t desc[UDF_SECTOR_SIZE];
-    if (!read_descriptor(abs_fsd, TAG_FSD, desc, sizeof(desc))) return false;
+    // Fallback for genisoimage-style images: the LVD FSD pointer,
+    // partition maps and PD partition start are garbage, but the whole
+    // directory tree lives right after the anchor with block numbers
+    // relative to the FSD sector itself.
+    return locate_root_in_head(out);
+}
 
-    // Root directory ICB (long_ad)
-    UdfLongAd root_icb;
-    root_icb.extent_length = u32le(desc + 408);
-    root_icb.location = u32le(desc + 412);
-    root_icb.partition_ref = u16le(desc + 416);
+// genisoimage -udf produces non-standard images where the FSD pointer
+// in the LVD is 0 and the PD partition start is junk; the real tree is
+// stored immediately after the anchor (AVDP) sector and every block
+// number is relative to the FSD sector.  Rebase partition 0 on the FSD
+// sector and use the first directory File Entry after it as the root.
+bool UdfParser::locate_root_in_head(std::vector<UdfEntry>& out) {
+    const int64_t kScan = 512;
+    const int64_t kAnchor = UDF_ANCHOR_SECTOR;
 
-    return read_directory(root_icb, out, 0);
+    // 1. Find the FSD right after the anchor sector.
+    int64_t fsd_abs = -1;
+    for (int64_t s = kAnchor + 1; s < kAnchor + kScan; s++) {
+        UdfTag tag;
+        if (read_tag(s, tag) && tag.identifier == TAG_FSD) {
+            fsd_abs = s;
+            break;
+        }
+    }
+    if (fsd_abs < 0) return false;
+
+    // 2. Rebase partition 0 so block numbers are FSD-relative.
+    if (partition_starts_.empty()) {
+        partition_starts_.push_back(fsd_abs);
+    } else {
+        partition_starts_[0] = fsd_abs;
+    }
+
+    // 3. The first directory File Entry after the FSD is the root.
+    for (int64_t s = fsd_abs + 1; s < fsd_abs + kScan; s++) {
+        UdfTag tag;
+        if (!read_tag(s, tag)) continue;
+        if (tag.identifier != TAG_FE && tag.identifier != TAG_EFE) continue;
+
+        uint8_t desc[UDF_SECTOR_SIZE];
+        if (!read_sector(s, desc, 1)) continue;
+        if (desc[16 + 11] != 4) continue;  // file type must be directory
+
+        UdfLongAd root_icb;
+        root_icb.extent_length = UDF_SECTOR_SIZE;
+        root_icb.location = s - partition_starts_[0];
+        root_icb.partition_ref = 0;
+        return read_directory(root_icb, out, 0);
+    }
+    return false;
 }
 
 bool UdfParser::read_allocation_extent(int64_t sector, int64_t length,

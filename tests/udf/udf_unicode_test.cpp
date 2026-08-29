@@ -125,6 +125,39 @@ TEST(UdfNameTest, CompressionIdBelow8) {
     EXPECT_EQ(result.confidence, 70);
 }
 
+// genisoimage writes compression IDs 8/16 without the UDF character
+// count field (characters start right after the ID).  The first
+// character byte must not be mistaken for a count.
+TEST(UdfNameTest, GenisoimageId8NoCount) {
+    // {8, 't','o','r','r','e','n','t'} -> "torrent" (not "orrent")
+    const uint8_t data[] = {8, 't', 'o', 'r', 'r', 'e', 'n', 't'};
+    auto result = decode_udf_name(data, sizeof(data));
+    EXPECT_EQ(result.utf8, "torrent");
+}
+
+TEST(UdfNameTest, GenisoimageId8NoCountDigitStart) {
+    // {8, '0','8','0','3','.','r','a','r'} -> "0803.rar" (not "803.rar")
+    const uint8_t data[] = {8, '0', '8', '0', '3', '.', 'r', 'a', 'r'};
+    auto result = decode_udf_name(data, sizeof(data));
+    EXPECT_EQ(result.utf8, "0803.rar");
+}
+
+TEST(UdfNameTest, GenisoimageId16NoCountAscii) {
+    // {16, 0x00,'K', 0x00,'U'} -> "KU" (0x00 is the first UTF-16BE
+    // high byte, not a count of zero)
+    const uint8_t data[] = {16, 0x00, 'K', 0x00, 'U'};
+    auto result = decode_udf_name(data, sizeof(data));
+    EXPECT_EQ(result.utf8, "KU");
+}
+
+TEST(UdfNameTest, GenisoimageId16NoCountChinese) {
+    // {16, 0x4E,0x2D, 0x65,0x87} -> "中文" (0x4E is the first UTF-16BE
+    // high byte, not a count of 78)
+    const uint8_t data[] = {16, 0x4E, 0x2D, 0x65, 0x87};
+    auto result = decode_udf_name(data, sizeof(data));
+    EXPECT_EQ(result.utf8, "中文");
+}
+
 TEST(UdfNameTest, EmptyInput) {
     auto result = decode_udf_name(nullptr, 0);
     EXPECT_TRUE(result.utf8.empty());

@@ -32,14 +32,24 @@ FILE* open_file_utf8(const std::string& path, const char* mode) {
     return _wfopen(wide_path.c_str(), wide_mode.c_str());
 }
 
+int fseek_64(FILE* f, int64_t offset, int origin) {
+    return _fseeki64(f, offset, origin);
+}
+
 } // namespace offcat
 
 #else // POSIX
+
+#include <cstdio>
 
 namespace offcat {
 
 FILE* open_file_utf8(const std::string& path, const char* mode) {
     return std::fopen(path.c_str(), mode);
+}
+
+int fseek_64(FILE* f, int64_t offset, int origin) {
+    return fseeko(f, static_cast<off_t>(offset), origin);
 }
 
 } // namespace offcat
