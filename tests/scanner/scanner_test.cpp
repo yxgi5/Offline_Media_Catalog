@@ -207,6 +207,62 @@ TEST(ScannerTest, Cancellation) {
     std::filesystem::remove(db_path + "-shm");
 }
 
+TEST(ScannerTest, RescanReplacesEntries) {
+    std::string dir = create_temp_dir();
+    std::string db_path = temp_db_path("offcat_rescan_test.db");
+    std::filesystem::remove(db_path);
+
+    create_test_file(dir + "/keep.txt", "keep");
+    create_test_file(dir + "/remove_me.txt", "bye");
+
+    Database db;
+    ASSERT_TRUE(is_ok(db.create(db_path)));
+
+    CancellationManager cancel;
+    Scanner scanner(db, cancel);
+    ScanOptions options;
+
+    // First scan
+    ASSERT_TRUE(is_ok(scanner.scan_source(dir, options)));
+    EXPECT_EQ(scanner.files_scanned(), 2);
+
+    SourceManager sm(db);
+    EntryManager em(db);
+
+    // Rescan of the same path must replace, not duplicate
+    ASSERT_TRUE(is_ok(scanner.scan_source(dir, options)));
+    auto sources = sm.get_all();
+    ASSERT_TRUE(is_ok(sources));
+    ASSERT_EQ(get_ok(sources).size(), 1);
+    auto entries = em.get_by_source(get_ok(sources)[0].id);
+    ASSERT_TRUE(is_ok(entries));
+    ASSERT_EQ(get_ok(entries).size(), 2);
+
+    // Remove a file and rescan: the stale entry must disappear
+    std::filesystem::remove(dir + "/remove_me.txt");
+    ASSERT_TRUE(is_ok(scanner.scan_source(dir, options)));
+    auto sources2 = sm.get_all();
+    ASSERT_TRUE(is_ok(sources2));
+    ASSERT_EQ(get_ok(sources2).size(), 1);
+    auto entries2 = em.get_by_source(get_ok(sources2)[0].id);
+    ASSERT_TRUE(is_ok(entries2));
+    ASSERT_EQ(get_ok(entries2).size(), 1);
+    EXPECT_EQ(get_ok(entries2)[0].name, "keep.txt");
+
+    // FTS index must not retain rows of the removed entry
+    SearchEngine engine(db);
+    auto results = engine.search("remove_me");
+    ASSERT_TRUE(is_ok(results));
+    EXPECT_EQ(get_ok(results).size(), 0);
+
+    // Cleanup
+    db.close();
+    std::filesystem::remove_all(dir);
+    std::filesystem::remove(db_path);
+    std::filesystem::remove(db_path + "-wal");
+    std::filesystem::remove(db_path + "-shm");
+}
+
 // ── Search ──────────────────────────────────────────────────────────
 
 TEST(SearchTest, FtsNameAndPath) {

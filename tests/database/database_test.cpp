@@ -403,3 +403,44 @@ TEST(ScanManagerTest, InsertAndFinish) {
     std::filesystem::remove(path + "-wal");
     std::filesystem::remove(path + "-shm");
 }
+
+TEST(DatabaseTest, MigratesContentlessFts) {
+    std::string path = temp_db_path("offcat_test_ftsmig.db");
+    std::filesystem::remove(path);
+
+    Database db;
+    ASSERT_TRUE(is_ok(db.create(path)));
+
+    // Simulate an old catalog: contentless FTS index with existing rows.
+    ASSERT_TRUE(is_ok(db.execute(
+        "DROP TABLE entry_fts;"
+        "CREATE VIRTUAL TABLE entry_fts USING fts5("
+        " name, path, source_name, content='', tokenize='unicode61');"
+        "INSERT INTO source (id, name, type) VALUES (1, 'SRC', 'Directory');"
+        "INSERT INTO entry (id, source_id, parent_id, name, type) VALUES"
+        " (1, 1, NULL, 'root.txt', 1), (2, 1, 1, 'sub.txt', 1);"
+        "INSERT INTO entry_fts(rowid, name, path, source_name) VALUES"
+        " (1, 'root.txt', 'root.txt', 'SRC'),"
+        " (2, 'sub.txt', 'root.txt/sub.txt', 'SRC');")));
+
+    // Re-initialize: the contentless index must be replaced and rebuilt
+    // from the entry table.
+    auto init = db.initialize_schema();
+    ASSERT_TRUE(is_ok(init)) << get_err(init).message;
+
+    // The new index is a regular fts5 table, so rowid DELETE works.
+    ASSERT_TRUE(is_ok(db.execute("DELETE FROM entry_fts WHERE rowid = 1;")));
+
+    // Both entries were rebuilt; one remains after the delete.
+    {
+        Statement stmt(db, "SELECT COUNT(*) FROM entry_fts");
+        ASSERT_TRUE(stmt.is_valid());
+        ASSERT_TRUE(stmt.step());
+        EXPECT_EQ(stmt.column_int64(0), 1);
+    }
+
+    db.close();
+    std::filesystem::remove(path);
+    std::filesystem::remove(path + "-wal");
+    std::filesystem::remove(path + "-shm");
+}

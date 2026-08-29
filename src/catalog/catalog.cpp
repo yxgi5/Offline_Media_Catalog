@@ -115,6 +115,54 @@ Result<int64_t> SourceManager::count() {
     return stmt.column_int64(0);
 }
 
+Result<int64_t> SourceManager::find_by_path(const std::string& source_path) {
+    // Match both the exact path and the trailing-separator-stripped
+    // variant so "S:\dir" and "S:\dir\" hit the same source.
+    std::string trimmed = source_path;
+    while (trimmed.size() > 1 &&
+           (trimmed.back() == '/' || trimmed.back() == '\\')) {
+        trimmed.pop_back();
+    }
+    Statement stmt(db_,
+        "SELECT id FROM source WHERE source_path = ? OR source_path = ? LIMIT 1");
+    if (!stmt.is_valid()) return Error{1, "Failed to prepare source lookup"};
+    stmt.bind_text(1, source_path);
+    stmt.bind_text(2, trimmed);
+    if (!stmt.step()) return 0;  // no previous scan of this path
+    return stmt.column_int64(0);
+}
+
+Result<bool> SourceManager::remove_tree(int64_t source_id) {
+    // Runs inside the caller's transaction.  Deferred FK checks allow the
+    // self-referencing entry.parent_id tree to be deleted in any order.
+    if (is_err(db_.execute("PRAGMA defer_foreign_keys = ON;"))) {
+        return Error{1, "Failed to enable deferred foreign keys"};
+    }
+    const char* sqls[] = {
+        "DELETE FROM checksum WHERE entry_id IN "
+            "(SELECT id FROM entry WHERE source_id = ?)",
+        "DELETE FROM container WHERE entry_id IN "
+            "(SELECT id FROM entry WHERE source_id = ?)",
+        // Contentless FTS rows are not cascaded; drop them manually.
+        "DELETE FROM entry_fts WHERE rowid IN "
+            "(SELECT id FROM entry WHERE source_id = ?)",
+        "DELETE FROM entry WHERE source_id = ?",
+        "DELETE FROM scan WHERE source_id = ?",
+        "DELETE FROM source WHERE id = ?",
+    };
+    for (const char* sql : sqls) {
+        Statement stmt(db_, sql);
+        if (!stmt.is_valid()) {
+            return Error{1, "Failed to prepare source cleanup"};
+        }
+        stmt.bind_int64(1, source_id);
+        if (!stmt.step_done()) {
+            return Error{1, "Failed to remove source data"};
+        }
+    }
+    return true;
+}
+
 // ── EntryManager ────────────────────────────────────────────────────
 
 EntryManager::EntryManager(Database& db) : db_(db) {}

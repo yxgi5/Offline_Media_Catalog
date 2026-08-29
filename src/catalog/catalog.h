@@ -16,6 +16,13 @@ public:
     Result<std::vector<SourceData>> get_all();
     Result<int64_t> count();
 
+    // Find a source by its scan path (tolerates trailing separators)
+    Result<int64_t> find_by_path(const std::string& source_path);
+
+    // Remove a source and all its data (entries, containers, checksums,
+    // FTS rows, scan records).  Must be called inside a transaction.
+    Result<bool> remove_tree(int64_t source_id);
+
 private:
     Database& db_;
 };

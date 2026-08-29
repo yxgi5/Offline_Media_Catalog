@@ -71,6 +71,29 @@ Result<int64_t> Scanner::scan_source(const std::string& path,
 
     LOG_INFO("Scanning source: " + source_name + " (" + path + ")");
 
+    // Begin the transaction early so the replacement removal, the
+    // source/scan records and every entry commit atomically.  On failure
+    // or on cancellation of a replacement scan everything rolls back and
+    // the previous catalog data stays intact.
+    Transaction txn(db_);
+
+    // Replacement semantics: a previous scan of the same path is removed
+    // instead of accumulating duplicate sources/entries.
+    bool replaced = false;
+    auto old_result = source_mgr_.find_by_path(path);
+    if (is_err(old_result)) {
+        return Error{1, "Failed to look up existing source"};
+    }
+    if (get_ok(old_result) > 0) {
+        auto rm_result = source_mgr_.remove_tree(get_ok(old_result));
+        if (is_err(rm_result)) {
+            return Error{1, "Failed to remove previous source data: " +
+                            get_err(rm_result).message};
+        }
+        replaced = true;
+        LOG_INFO("Replacing previous scan data for: " + source_name);
+    }
+
     // Create source record
     SourceData source;
     source.name = source_name;
@@ -126,9 +149,6 @@ Result<int64_t> Scanner::scan_source(const std::string& path,
     }
     int64_t scan_id = get_ok(scan_result);
 
-    // Begin scanning
-    Transaction txn(db_);
-
     std::error_code ec;
     if (std::filesystem::is_directory(path, ec)) {
         // Scan directory tree
@@ -137,6 +157,13 @@ Result<int64_t> Scanner::scan_source(const std::string& path,
         if (is_err(dir_result)) {
             auto& err = get_err(dir_result);
             if (err.code == 0) {
+                if (replaced) {
+                    // A replacement scan was cancelled: roll back so the
+                    // previous catalog data is preserved.
+                    txn.rollback();
+                    LOG_INFO("Scan cancelled, previous data preserved");
+                    return Error{0, "Scan cancelled"};
+                }
                 // Cancellation: stop gracefully, keep partial data
                 LOG_INFO("Scan cancelled by user");
             } else {
