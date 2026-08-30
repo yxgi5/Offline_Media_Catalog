@@ -93,6 +93,34 @@ Core principle #10 (the database is independent of the GUI and export formats) i
 10. 数据库独立于 GUI 和导出格式
     The database is independent of the GUI and export formats.
 
+## 容器扩展机制决策 / Container Extension Mechanism Decision
+
+新容器格式（zip 等）通过内置 `ContainerProvider` 扩展（修改代码、重新编译），不使用进程外插件。此决策于插件协议草案评审后确定，理由：
+
+New container formats (zip etc.) are added as built-in `ContainerProvider` implementations (modify code, recompile); no out-of-process plugins. This decision was made after reviewing a plugin-protocol draft, for the following reasons:
+
+- **深度语义完整性**：嵌套容器展开需要跨容器边界读取文件内容，进程外解析器无法承载，导致插件格式的展开深度上限为 1，与按格式控制深度的 `--depth-format iso=3,zip=1` 设计（见已知限制表）直接冲突；内置 provider 可原生递归（ISO provider 已在内部展开嵌套镜像）。
+  Depth semantics: expanding nested containers requires reading file contents across container boundaries, which an out-of-process parser cannot do; plugin-backed formats would be limited to depth 1, clashing with the per-format `--depth-format iso=3,zip=1` design (see the Known Limitations table). Built-in providers recurse natively (the ISO provider already expands nested images internally).
+- **发布成本趋近于零**：GitHub Actions 在 tag 时自动构建发布，加格式 = 加代码 + 打 tag，无需用户侧部署；本项目无第三方生态，"不重新编译"的收益几乎不存在。
+  Publishing costs ~nothing: GitHub Actions builds releases on tag pushes, so adding a format is add code + tag with no user-side deployment; with no third-party ecosystem, the "no recompile" benefit barely exists.
+- **避免双轨道复杂度**：进程管理（spawn/超时/杀进程/管道编码）、协议维护、安全信任面都是永久负担；项目刻意静态链接（避开 libstdc++ DLL 冲突），插件机制会重新引入动态边界。
+  Avoiding dual-track complexity: process management (spawn/timeout/kill/pipe encoding), protocol maintenance and the security trust surface would be permanent costs; the project deliberately links statically (avoiding libstdc++ DLL clashes), and plugins would reintroduce a dynamic boundary.
+
+此决策可逆。出现以下任一信号时重新评估插件化：
+
+This decision is reversible. Reconsider plugins when any of these signals appears:
+
+1. 外部贡献者：第三方需要添加私有格式但不 fork 主仓库。
+   External contributors: third parties need private formats without forking the main repository.
+2. 容器格式数量显著增长（超过约 5~10 种），主程序解析代码明显膨胀。
+   The number of container formats grows significantly (beyond roughly 5~10), visibly bloating the parser code.
+3. 同一格式需要多实现且热切换。
+   Multiple implementations of one format with hot-switching becomes a requirement.
+
+届时复用本决策沉淀的判据与协议骨架（NDJSON 条目树、probe/list 分工、read 预留），无需重新设计。
+
+If that happens, the criteria and protocol skeleton recorded here (NDJSON entry trees, probe/list split, reserved read command) can be reused without a redesign.
+
 ## 扫描流程 / Scan Flow
 
 ```
