@@ -1,15 +1,17 @@
 # Architecture
 
 ```
-                offcat
-                  │
-          ┌───────┴───────┐
-          │               │
-     Catalog Core        CLI
-          │
-    ┌─────┼──────┐
-    │     │      │
- SQLite Scanner Container
+                offcat.exe（单一入口）
+                    │
+        ┌───────────┴───────────┐
+        │                       │
+   Catalog Core                CLI（create / scan / search / info / serve）
+   (catalog / scanner /         │
+    database / container)   liboffcat_server（serve 子命令）
+        │                       ├─ HTTP + Viewer（JSON API）
+    ┌───┼───────┐               └─ 前端（可插拔）
+    │   │       │                   ├─ 内置 web/index.html（嵌入二进制）
+ SQLite Scanner Container          └─ 外部 --web-root <dir>（任意静态站点）
                  │
               ISO/UDF
 ```
@@ -28,6 +30,37 @@
 | platform | src/platform/ | 平台相关代码（预留） |
 | providers/iso | providers/iso/ | ISO9660 / Joliet / UDF 解析；Rock Ridge (SUSP/RRIP) 属性与 rr_moved 还原 |
 | web | web/ | 内嵌前端源文件（index.html，经 CMake 嵌入二进制） |
+
+## Web 查看器（serve）设计思路
+
+`serve` 子命令是**只读**的本机 Web 查看器，位于 CLI 与前端之间：
+
+```
+CLI serve（薄壳：解析 --port / --web-root）
+    → liboffcat_server（src/server/）
+        ├─ http.cpp    HTTP 基础设施（请求解析、响应、URL 解码）
+        ├─ viewer.cpp  Viewer：JSON API + 静态资源服务
+        └─ server.cpp  socket 服务器（仅绑定 127.0.0.1，单连接一线程）
+    → 前端（可插拔）
+        ├─ 内置：web/index.html（CMake 嵌入 web_resources.h，单文件零依赖）
+        └─ 外部：--web-root <dir> 任意静态站点（VVV 等）
+```
+
+设计决策：
+
+1. **前后端通过 HTTP JSON API 解耦（A 契约）**：前端只需实现
+   [web-api.md](web-api.md) 描述的契约，可用任何技术栈（内置 HTML、
+   VVV 或其它方案），核心零改动即可整体替换前端。
+2. **核心库 API（B 契约）与 Web API（A 契约）分层**：C++ 程序继续
+   直接链接 liboffcat_core 使用完整能力；浏览器前端只消费只读 JSON，
+   两层互不依赖。
+3. **只读约束**：数据库以 `SQLITE_OPEN_READONLY` 打开（server.cpp），
+   API 只有 GET；写操作只通过 CLI（scan 等）进行，Web 层无法修改
+   原始扫描数据。
+4. **前端可整体替换**：`--web-root` 提供目录后，`/` 与静态资源改从
+   该目录读取（`index.html` 优先于内嵌版本），API 路径不变。
+
+核心原则第 10 条（数据库独立于 GUI 和导出格式）是这一设计的基础。
 
 ## 核心原则
 

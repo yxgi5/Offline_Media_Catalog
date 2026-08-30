@@ -18,7 +18,7 @@
 - OSTA Compressed Unicode 解析（含非标准 UDF 兼容性恢复）
 - 可选校验码：SHA-256 / MD5 / CRC32
 - 扫描取消（Ctrl+C）与错误恢复
-- CLI：create / scan / search / info
+- CLI：create / scan / search / info / serve（只读 Web 查看器，前端可插拔）
 
 ## 构建
 
@@ -124,6 +124,31 @@ offcat info catalog.db
 
 显示 Sources / Entries / Containers 数量，以及每个 Source 的条目数。
 
+### 5. 启动 Web 查看器（serve）
+
+以只读方式启动本机 Web 服务，在浏览器中浏览目录树、展开 ISO 容器、
+FTS 搜索：
+
+```bash
+# 默认端口 8080，浏览器打开 http://127.0.0.1:8080/
+offcat serve catalog.db
+
+# 指定端口
+offcat serve --port 8090 catalog.db
+
+# 使用外部前端（替换内置页面）
+offcat serve --web-root ./my_frontend catalog.db
+```
+
+| 选项 | 说明 |
+|------|------|
+| `--port <N>` | 监听端口（默认 8080），仅绑定 127.0.0.1 |
+| `--web-root <dir>` | 前端资源目录；提供后任意静态站点（HTML/CSS/JS/图片）被托管，`index.html` 优先于内置版本 |
+
+- 数据库以**只读模式**打开，任何接口都不能修改数据；Ctrl+C 停止服务。
+- 内置前端为单文件、零外部依赖；外部前端与核心只通过 JSON API 交互，
+  契约见 [Web API](docs/web-api.md)。
+
 ### Windows 注意事项
 
 - 扫描与校验码计算使用流式读取，无需管理员权限，不挂载 ISO。
@@ -136,6 +161,7 @@ offcat info catalog.db
 - [架构](docs/architecture.md)
 - [数据库 Schema](docs/catalog-schema.md)
 - [Provider API](docs/provider-api.md)
+- [Web API（前端对接契约）](docs/web-api.md)
 - [ISO/UDF 兼容性](docs/compatibility.md)
 
 ## License
