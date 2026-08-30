@@ -1,0 +1,108 @@
+# Build release binaries on tag pushes and attach them to the release.
+#
+# Triggers:
+#   - push of any tag matching v* (e.g. v1.0.1): builds and publishes
+#   - manual workflow_dispatch: optionally specify a tag to attach
+#     assets to (useful to backfill assets for an already-released tag)
+#
+# Produces Windows (MinGW-w64 cross) and Linux binaries plus SHA256SUMS.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to attach assets to (e.g. v1.0.0)'
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: Build Windows exe (MinGW cross)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install MinGW-w64 toolchain
+        run: sudo apt-get update && sudo apt-get install -y g++-mingw-w64-x86-64 ninja-build
+
+      - name: Configure
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DOFFCAT_BUILD_TESTS=OFF
+          -DCMAKE_SYSTEM_NAME=Windows
+          -DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-g++
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Rename artifact
+        run: mv build/offcat.exe offcat-windows-x86_64.exe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-exe
+          path: offcat-windows-x86_64.exe
+
+  build-linux:
+    name: Build Linux binary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Ninja
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - name: Configure
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DOFFCAT_BUILD_TESTS=OFF
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Rename artifact
+        run: mv build/offcat offcat-linux-x86_64
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-binary
+          path: offcat-linux-x86_64
+
+  release:
+    name: Publish release assets
+    needs: [build-windows, build-linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-exe
+          path: assets
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-binary
+          path: assets
+
+      - name: Generate checksums
+        run: |
+          cd assets
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Attach assets to release
+        uses: softprops/action-gh-release@v2
+        with:
+          # Tag context: the pushed tag, or the user-provided tag on
+          # manual dispatch. If the release does not exist yet it is
+          # created with auto-generated notes.
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          files: assets/*
+          generate_release_notes: true
