@@ -25,7 +25,7 @@ endif()
 FetchContent_Declare(
     sqlite3
     URL ${CMAKE_CURRENT_SOURCE_DIR}/third_party/sqlite-amalgamation-3460100.zip
-    URL_HASH SHA3_256=5e46e370e29e389660770e39b81af33d57d2e20f32fc2a85398b85353a6a467d
+    URL_HASH SHA3_256=af6aae8d3eccc608857c63cf56efbadc70da48b5c719446b353ed88dded1e288
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE
 )
 FetchContent_MakeAvailable(sqlite3)

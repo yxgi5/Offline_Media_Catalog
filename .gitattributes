@@ -1,0 +1,5 @@
+# Vendored archives are fetched by URL_HASH — they must be stored
+# verbatim. Git's binary detection can misclassify highly compressible
+# zips (e.g. text-heavy archives) and apply EOL conversion, which would
+# break the SHA-3/SHA-256 verification at configure time.
+*.zip binary
