@@ -27,7 +27,19 @@ void Scanner::detect_tty() {
 #ifdef _WIN32
     HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE);
     DWORD mode = 0;
-    tty_ = (h != INVALID_HANDLE_VALUE) && GetConsoleMode(h, &mode);
+    // GetConsoleMode also succeeds on pipes (Win10 compatibility shim),
+    // so require FILE_TYPE_CHAR to distinguish a real console from a
+    // redirected/pipe stdout.
+    if (h != INVALID_HANDLE_VALUE && GetFileType(h) == FILE_TYPE_CHAR &&
+        GetConsoleMode(h, &mode)) {
+        // Enable ANSI VT sequences so the progress line can be erased
+        // whole-line (ESC[2K) instead of by byte count, which breaks
+        // with multi-byte UTF-8 paths.
+        SetConsoleMode(h, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+        tty_ = true;
+    } else {
+        tty_ = false;
+    }
 #else
     tty_ = isatty(fileno(stdout));
 #endif
@@ -38,8 +50,9 @@ void Scanner::detect_tty() {
 // seconds so logs stay readable.
 void Scanner::progress_line(const std::string& text) {
     if (tty_) {
-        std::cout << '\r' << text << std::flush;
-        progress_line_len_ = text.size();
+        // Clear the whole line first; byte-count based erasing leaves
+        // stale fragments when the path contains multi-byte UTF-8.
+        std::cout << "\r\x1b[2K" << text << std::flush;
         progress_printed_ = true;
     } else {
         std::cout << text << '\n' << std::flush;
@@ -48,8 +61,7 @@ void Scanner::progress_line(const std::string& text) {
 
 void Scanner::clear_progress() {
     if (tty_ && progress_printed_) {
-        std::cout << '\r' << std::string(progress_line_len_, ' ')
-                  << '\r' << std::flush;
+        std::cout << "\r\x1b[2K" << std::flush;
         progress_printed_ = false;
     }
 }

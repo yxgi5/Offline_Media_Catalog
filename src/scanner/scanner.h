@@ -59,7 +59,6 @@ private:
     bool show_progress_ = false;
     bool tty_ = false;
     bool progress_printed_ = false;
-    size_t progress_line_len_ = 0;
     std::chrono::steady_clock::time_point scan_start_;
     std::chrono::steady_clock::time_point last_progress_;
 

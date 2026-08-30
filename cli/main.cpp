@@ -401,6 +401,20 @@ static std::vector<std::string> utf8_argv() {
 #endif
 
 int main(int argc, char* argv[]) {
+#ifdef _WIN32
+    // The codebase prints UTF-8, but Windows consoles decode bytes with
+    // the system ANSI code page (e.g. GBK), garbling non-ASCII paths.
+    // Switch the console output to UTF-8 and enable ANSI VT sequences
+    // (used by the scan progress line for whole-line erasing).
+    if (HANDLE hout = GetStdHandle(STD_OUTPUT_HANDLE);
+        hout != INVALID_HANDLE_VALUE) {
+        DWORD mode = 0;
+        if (GetConsoleMode(hout, &mode)) {
+            SetConsoleMode(hout, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+        }
+        SetConsoleOutputCP(CP_UTF8);
+    }
+#endif
     std::vector<std::string> args_all;
 #ifdef _WIN32
     args_all = utf8_argv();
