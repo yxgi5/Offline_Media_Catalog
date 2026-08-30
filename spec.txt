@@ -731,7 +731,7 @@ offcat scan --containers /mnt/archive catalog.db
 
 启用 SHA-256：
 
-offcat scan --sha256 /mnt/archive catalog.db
+offcat scan --checksum sha256 /mnt/archive catalog.db
 27. Search
 
 使用：

@@ -53,7 +53,6 @@ static void print_usage(const char* prog) {
         "  --checksum <spec> Checksums to compute: comma-separated list of\n"
         "                    sha256|md5|crc32, or all/none; repeatable\n"
         "                    (bare --checksum = all; none disables)\n"
-        "  --sha256 | --md5 | --crc32   Shorthand for one algorithm\n"
         "  --verbose         Verbose output\n"
         "  --debug           Debug output\n"
         "  --quiet           Minimal output\n";
@@ -131,13 +130,7 @@ static bool parse_checksum_flags(const std::vector<std::string>& args,
                                  int& idx) {
     for (; idx < static_cast<int>(args.size()); idx++) {
         const std::string& arg = args[idx];
-        if (arg == "--sha256") {
-            add_algorithm(options, ChecksumAlgorithm::SHA256);
-        } else if (arg == "--md5") {
-            add_algorithm(options, ChecksumAlgorithm::MD5);
-        } else if (arg == "--crc32") {
-            add_algorithm(options, ChecksumAlgorithm::CRC32);
-        } else if (arg == "--checksum") {
+        if (arg == "--checksum") {
             // --checksum [spec]: consume the next argument only when it
             // parses as a valid spec; a bare --checksum keeps the legacy
             // meaning (all algorithms).  Specs are repeatable and the

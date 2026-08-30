@@ -102,7 +102,6 @@ offcat scan --containers --depth 2 movie.iso catalog.db
 | `--containers` | 扫描并展开 ISO 容器（默认不展开） |
 | `--depth <N>` | 容器内目录最大递归深度（默认 1） |
 | `--checksum <spec>` | 校验算法：逗号分隔列表（`sha256`/`md5`/`crc32`）、`all`（全部）或 `none`（不计算）；可重复出现并自动去重；裸 `--checksum` = all |
-| `--sha256` / `--md5` / `--crc32` | 单算法快捷方式，等价于 `--checksum` 对应项 |
 | `--verbose` / `--debug` / `--quiet` | 日志级别 |
 
 扫描默认记录每个条目的修改时间与创建时间（创建时间在平台无法
