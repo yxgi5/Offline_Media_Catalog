@@ -12,6 +12,7 @@
 #include <gtest/gtest.h>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -164,6 +165,41 @@ TEST(FileUtilTest, IsoParserOpensChinesePath) {
     std::vector<IsoEntry> entries;
     ASSERT_TRUE(parser.read_root_directory(entries));
     EXPECT_TRUE(entries.empty());  // only "." and "..", which are filtered
+}
+
+// The scanner records a creation time per entry by default; the
+// platform helper must return a sane value for an existing file and
+// fail cleanly for a missing one.
+TEST(FileUtilTest, CreationTimeUtc) {
+    const auto dir = test_dir();
+    std::filesystem::create_directories(dir);
+    const auto file = dir / "creation_time.bin";
+    {
+        std::ofstream out(file, std::ios::binary);
+        out << "x";
+    }
+
+    int64_t birth = 0;
+    bool ok = get_creation_time_utc(file.string(), birth);
+#ifdef _WIN32
+    // Windows always provides a creation time.
+    ASSERT_TRUE(ok);
+    EXPECT_GT(birth, 0);
+    EXPECT_LE(birth, static_cast<int64_t>(std::time(nullptr)) + 1);
+#else
+    // macOS provides a birth time; Linux may not (returns false).
+    if (ok) {
+        EXPECT_GT(birth, 0);
+    }
+#endif
+
+    // Missing file must fail cleanly (never a bogus timestamp).
+    int64_t missing_birth = 12345;
+    EXPECT_FALSE(get_creation_time_utc(
+        (file.string() + ".nope"), missing_birth));
+    EXPECT_EQ(missing_birth, 12345);  // untouched on failure
+
+    std::filesystem::remove(file);
 }
 
 // Windows `long` is 32-bit, so std::fseek() cannot reach offsets beyond

@@ -20,4 +20,11 @@ FILE* open_file_utf8(const std::string& path, const char* mode);
 // larger.  POSIX uses fseeko() with a 64-bit off_t.
 int fseek_64(FILE* f, int64_t offset, int origin);
 
+// Best-effort creation time (unix epoch seconds) for a UTF-8 path.
+//
+// Returns false when the platform cannot provide one (e.g. Linux
+// without statx support) or the lookup fails; callers treat that as
+// "unknown" and keep the timestamp NULL.
+bool get_creation_time_utc(const std::string& path, int64_t& out);
+
 } // namespace offcat

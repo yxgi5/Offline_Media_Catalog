@@ -84,6 +84,20 @@ TEST(ScannerTest, ScanDirectoryTree) {
     ASSERT_EQ(get_ok(results).size(), 1);
     EXPECT_EQ(get_ok(results)[0].entry_name, "深層文件.txt");
 
+#ifdef _WIN32
+    // Creation time is recorded by default; Windows always provides it.
+    auto entries = em.get_by_source(source_id);
+    ASSERT_TRUE(is_ok(entries));
+    bool saw_file = false;
+    for (const auto& e : get_ok(entries)) {
+        if (e.type == EntryType::File) {
+            saw_file = true;
+            EXPECT_GT(e.birthtime, 0) << "birthtime missing for " << e.name;
+        }
+    }
+    EXPECT_TRUE(saw_file);
+#endif
+
     // Cleanup
     db.close();
     std::filesystem::remove_all(dir);

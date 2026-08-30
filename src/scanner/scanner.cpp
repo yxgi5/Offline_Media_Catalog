@@ -2,6 +2,7 @@
 #include "core/checksum.h"
 #include "core/logger.h"
 #include "container/provider.h"
+#include "platform/file_util.h"
 #include <chrono>
 #include <fstream>
 #include <sstream>
@@ -286,6 +287,13 @@ Result<int64_t> Scanner::scan_directory(int64_t source_id, int64_t parent_id,
                 entry_data.mtime = std::chrono::system_clock::to_time_t(sctp);
             }
 
+            // Creation time is not exposed by std::filesystem; best-effort
+            // platform lookup (NULL when unavailable).
+            int64_t birthtime = 0;
+            if (get_creation_time_utc(entry.path().string(), birthtime)) {
+                entry_data.birthtime = birthtime;
+            }
+
 #ifdef __unix__
             entry_data.mode = static_cast<int64_t>(file_status.permissions());
 #endif
@@ -379,6 +387,12 @@ Result<int64_t> Scanner::scan_file_entry(int64_t source_id, int64_t parent_id,
             ftime - std::filesystem::file_time_type::clock::now() +
             std::chrono::system_clock::now());
         entry_data.mtime = std::chrono::system_clock::to_time_t(sctp);
+    }
+
+    // Best-effort creation time (NULL when unavailable).
+    int64_t birthtime = 0;
+    if (get_creation_time_utc(file_path.string(), birthtime)) {
+        entry_data.birthtime = birthtime;
     }
 
     auto insert_result = entry_mgr_.insert(entry_data);

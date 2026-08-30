@@ -86,9 +86,10 @@ offcat scan --containers /mnt/archive catalog.db
 # 展开容器并递归到更深层目录（depth=2：ISO 内目录的下一层）
 offcat scan --containers --depth 2 /mnt/archive catalog.db
 
-# 同时计算校验码
-offcat scan --containers --sha256 --crc32 /mnt/archive catalog.db
-offcat scan --containers --checksum /mnt/archive catalog.db   # sha256+md5+crc32
+# 计算校验码（单参数入口，逗号分隔复合）
+offcat scan --containers --checksum crc32 /mnt/archive catalog.db
+offcat scan --containers --checksum sha256,crc32 /mnt/archive catalog.db
+offcat scan --containers --checksum all /mnt/archive catalog.db   # 三种全部
 
 # 直接扫描单个 ISO 文件（也会展开容器内部，无需目录包裹）
 offcat scan --containers --depth 2 movie.iso catalog.db
@@ -100,9 +101,12 @@ offcat scan --containers --depth 2 movie.iso catalog.db
 |------|------|
 | `--containers` | 扫描并展开 ISO 容器（默认不展开） |
 | `--depth <N>` | 容器内目录最大递归深度（默认 1） |
-| `--sha256` / `--md5` / `--crc32` | 计算对应校验码 |
-| `--checksum` | 计算全部三种校验码 |
+| `--checksum <spec>` | 校验算法：逗号分隔列表（`sha256`/`md5`/`crc32`）、`all`（全部）或 `none`（不计算）；可重复出现并自动去重；裸 `--checksum` = all |
+| `--sha256` / `--md5` / `--crc32` | 单算法快捷方式，等价于 `--checksum` 对应项 |
 | `--verbose` / `--debug` / `--quiet` | 日志级别 |
+
+扫描默认记录每个条目的修改时间与创建时间（创建时间在平台无法
+提供时保持为空，如 Linux 无 statx 的情况）。
 
 扫描支持 Ctrl+C 取消：已扫描数据保留，Catalog 标记为 cancelled。
 

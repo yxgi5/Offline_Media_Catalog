@@ -50,13 +50,80 @@ static void print_usage(const char* prog) {
         "Scan options:\n"
         "  --containers      Scan and expand ISO containers\n"
         "  --depth <N>       Max container depth (default 1)\n"
-        "  --sha256          Compute SHA-256 checksums\n"
-        "  --md5             Compute MD5 checksums\n"
-        "  --crc32           Compute CRC32 checksums\n"
-        "  --checksum        Compute all checksums (sha256+md5+crc32)\n"
+        "  --checksum <spec> Checksums to compute: comma-separated list of\n"
+        "                    sha256|md5|crc32, or all/none; repeatable\n"
+        "                    (bare --checksum = all; none disables)\n"
+        "  --sha256 | --md5 | --crc32   Shorthand for one algorithm\n"
         "  --verbose         Verbose output\n"
         "  --debug           Debug output\n"
         "  --quiet           Minimal output\n";
+}
+
+static void add_algorithm(ScanOptions& options, ChecksumAlgorithm algo) {
+    for (auto existing : options.checksum_algorithms) {
+        if (existing == algo) return;  // deduplicate
+    }
+    options.checksum_algorithms.push_back(algo);
+    options.compute_checksum = true;
+}
+
+// Apply one --checksum spec (already comma-split tokens).  Returns
+// false on an unknown algorithm name.
+static bool apply_checksum_spec(const std::vector<std::string>& tokens,
+                                ScanOptions& options) {
+    for (const auto& t : tokens) {
+        if (t == "none") {
+            options.checksum_algorithms.clear();
+            options.compute_checksum = false;
+        } else if (t == "all") {
+            add_algorithm(options, ChecksumAlgorithm::SHA256);
+            add_algorithm(options, ChecksumAlgorithm::MD5);
+            add_algorithm(options, ChecksumAlgorithm::CRC32);
+        } else if (t == "sha256") {
+            add_algorithm(options, ChecksumAlgorithm::SHA256);
+        } else if (t == "md5") {
+            add_algorithm(options, ChecksumAlgorithm::MD5);
+        } else if (t == "crc32") {
+            add_algorithm(options, ChecksumAlgorithm::CRC32);
+        } else {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Validate a spec (already comma-split tokens) without touching
+// options, so a partially valid list cannot be half-applied.
+static bool is_valid_spec(const std::vector<std::string>& tokens) {
+    for (const auto& t : tokens) {
+        if (t != "none" && t != "all" && t != "sha256" &&
+            t != "md5" && t != "crc32") {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Split "sha256,crc32" into tokens, trimming whitespace around each.
+static std::vector<std::string> split_csv(const std::string& s) {
+    std::vector<std::string> out;
+    size_t start = 0;
+    while (start <= s.size()) {
+        size_t comma = s.find(',', start);
+        std::string token = comma == std::string::npos
+            ? s.substr(start)
+            : s.substr(start, comma - start);
+        while (!token.empty() && (token.front() == ' ' || token.front() == '\t')) {
+            token.erase(token.begin());
+        }
+        while (!token.empty() && (token.back() == ' ' || token.back() == '\t')) {
+            token.pop_back();
+        }
+        out.push_back(token);
+        if (comma == std::string::npos) break;
+        start = comma + 1;
+    }
+    return out;
 }
 
 static bool parse_checksum_flags(const std::vector<std::string>& args,
@@ -65,19 +132,34 @@ static bool parse_checksum_flags(const std::vector<std::string>& args,
     for (; idx < static_cast<int>(args.size()); idx++) {
         const std::string& arg = args[idx];
         if (arg == "--sha256") {
-            options.compute_checksum = true;
-            options.checksum_algorithms.push_back(ChecksumAlgorithm::SHA256);
+            add_algorithm(options, ChecksumAlgorithm::SHA256);
         } else if (arg == "--md5") {
-            options.compute_checksum = true;
-            options.checksum_algorithms.push_back(ChecksumAlgorithm::MD5);
+            add_algorithm(options, ChecksumAlgorithm::MD5);
         } else if (arg == "--crc32") {
-            options.compute_checksum = true;
-            options.checksum_algorithms.push_back(ChecksumAlgorithm::CRC32);
+            add_algorithm(options, ChecksumAlgorithm::CRC32);
         } else if (arg == "--checksum") {
-            options.compute_checksum = true;
-            options.checksum_algorithms.push_back(ChecksumAlgorithm::SHA256);
-            options.checksum_algorithms.push_back(ChecksumAlgorithm::MD5);
-            options.checksum_algorithms.push_back(ChecksumAlgorithm::CRC32);
+            // --checksum [spec]: consume the next argument only when it
+            // parses as a valid spec; a bare --checksum keeps the legacy
+            // meaning (all algorithms).  Specs are repeatable and the
+            // results are merged (deduplicated).
+            bool consumed = false;
+            if (idx + 1 < static_cast<int>(args.size())) {
+                auto tokens = split_csv(args[idx + 1]);
+                if (is_valid_spec(tokens)) {
+                    apply_checksum_spec(tokens, options);
+                    idx++;
+                    consumed = true;
+                } else if (args[idx + 1].find(',') != std::string::npos) {
+                    // A comma list with an unknown algorithm name is
+                    // clearly a bad spec, not a path.
+                    std::cerr << "Error: invalid --checksum spec: "
+                              << args[idx + 1] << "\n";
+                    return false;
+                }
+            }
+            if (!consumed) {
+                apply_checksum_spec({"all"}, options);
+            }
         } else if (arg == "--containers") {
             options.scan_containers = true;
         } else if (arg == "--depth") {
