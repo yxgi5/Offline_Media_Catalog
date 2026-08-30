@@ -28,6 +28,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Fetch tags too: the version string comes from git describe
+          # at configure time; the default shallow clone has no tag refs
+          # and would silently fall back to OFFCAT_VERSION_DEFAULT.
+          fetch-depth: 0
 
       - name: Install MinGW-w64 toolchain
         run: sudo apt-get update && sudo apt-get install -y g++-mingw-w64-x86-64 ninja-build
@@ -61,6 +66,11 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Fetch tags too: the version string comes from git describe
+          # at configure time; the default shallow clone has no tag refs
+          # and would silently fall back to OFFCAT_VERSION_DEFAULT.
+          fetch-depth: 0
 
       - name: Install Ninja
         run: sudo apt-get update && sudo apt-get install -y ninja-build

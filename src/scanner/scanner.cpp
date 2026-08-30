@@ -226,7 +226,12 @@ Result<int64_t> Scanner::scan_source(const std::string& path,
     scan.source_id = source_id;
     scan.started_at = std::chrono::system_clock::to_time_t(
         std::chrono::system_clock::now());
-    scan.scanner_version = "0.1.0";
+    scan.scanner_version =
+#ifdef OFFCAT_VERSION
+        OFFCAT_VERSION;  // from git tag via CMake
+#else
+        "unknown";
+#endif
 
     // Build options JSON
     std::ostringstream opts;

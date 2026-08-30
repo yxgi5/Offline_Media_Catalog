@@ -384,7 +384,12 @@ TEST(ScanManagerTest, InsertAndFinish) {
     ScanData scan;
     scan.source_id = get_ok(source_id);
     scan.started_at = 1000;
-    scan.scanner_version = "0.1.0";
+    scan.scanner_version =
+#ifdef OFFCAT_VERSION
+        OFFCAT_VERSION;  // keep in sync with the real scanner
+#else
+        "0.1.0";
+#endif
     scan.options = "{\"checksum\":[\"crc32\"],\"containers\":false}";
     scan.status = ScanStatus::InProgress;
 

@@ -118,6 +118,12 @@ cmake -B build -DOFFCAT_USE_OPENSSL=ON
 
 All commands operate on a SQLite catalog file (`.db`). Typical flow: create → scan → search.
 
+查看版本号 / Show the version:
+
+```bash
+offcat --version   # 或 / or: offcat -V
+```
+
 ### 1. 创建 Catalog / Create a Catalog
 
 ```bash

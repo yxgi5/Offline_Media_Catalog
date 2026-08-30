@@ -42,9 +42,17 @@ static void signal_handler(int /*signum*/) {
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
+// Version string comes from CMake (project(... VERSION ...)) via the
+// OFFCAT_VERSION compile definition.
+#ifdef OFFCAT_VERSION
+static constexpr const char* kVersion = OFFCAT_VERSION;
+#else
+static constexpr const char* kVersion = "unknown";
+#endif
+
 static void print_usage(const char* prog) {
     std::cout <<
-        "offcat - Offline Media Catalog\n"
+        "offcat " << kVersion << " - Offline Media Catalog\n"
         "Usage:\n"
         "  " << prog << " create <catalog.db>                    Create a new empty catalog\n"
         "  " << prog << " scan [options] <path> <catalog.db>     Scan a source into the catalog\n"
@@ -442,6 +450,9 @@ int main(int argc, char* argv[]) {
         return cmd_serve(args);
     } else if (command == "help" || command == "--help" || command == "-h") {
         print_usage(argv[0]);
+        return 0;
+    } else if (command == "--version" || command == "-V") {
+        std::cout << "offcat " << kVersion << "\n";
         return 0;
     }
 

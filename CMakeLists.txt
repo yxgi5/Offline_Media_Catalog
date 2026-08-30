@@ -1,5 +1,33 @@
 cmake_minimum_required(VERSION 3.16)
-project(offcat VERSION 0.1.0 LANGUAGES CXX C)
+
+# ── Version ──────────────────────────────────────────────────────────
+# Single source of truth: the most recent git tag (v1.0.0 -> 1.0.0),
+# so the CLI's --version, the scanner_version written into the
+# database and the GitHub release tag can never drift apart.
+# Falls back to OFFCAT_VERSION_DEFAULT when there is no .git (source
+# tarballs) or no tag yet; override with -DOFFCAT_VERSION=x.y.z.
+set(OFFCAT_VERSION_DEFAULT 1.0.0)
+set(OFFCAT_VERSION "" CACHE STRING "offcat version (default: latest git tag)")
+if(NOT OFFCAT_VERSION)
+    find_package(Git QUIET)
+    if(Git_FOUND)
+        execute_process(
+            COMMAND ${GIT_EXECUTABLE} describe --tags --abbrev=0 --match "v[0-9]*"
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+            RESULT_VARIABLE _offcat_git_result
+            OUTPUT_VARIABLE _offcat_git_tag
+            ERROR_QUIET
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+        )
+    endif()
+    if(_offcat_git_result EQUAL 0 AND _offcat_git_tag MATCHES "^v[0-9]")
+        # Strip the leading 'v' (v1.0.0 -> 1.0.0).
+        string(SUBSTRING "${_offcat_git_tag}" 1 -1 OFFCAT_VERSION)
+    else()
+        set(OFFCAT_VERSION "${OFFCAT_VERSION_DEFAULT}")
+    endif()
+endif()
+project(offcat VERSION ${OFFCAT_VERSION} LANGUAGES CXX C)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -96,6 +124,10 @@ target_link_libraries(offcat_core PUBLIC sqlite3)
 if(WIN32)
     target_compile_definitions(offcat_core PUBLIC _WIN32_WINNT=0x0601 NOMINMAX)
 endif()
+# Version string (from git tag, see top of file) is part of the core
+# ABI contract: the CLI --version and the scanner_version column in
+# the scans table both use it, so expose it to every consumer.
+target_compile_definitions(offcat_core PUBLIC OFFCAT_VERSION="${OFFCAT_VERSION}")
 
 # ── offcat_providers (static library) ───────────────────────────────
 file(GLOB_RECURSE OFFCAT_PROVIDER_SOURCES
