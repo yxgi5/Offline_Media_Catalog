@@ -102,6 +102,7 @@ offcat scan --containers --depth 2 movie.iso catalog.db
 | `--containers` | 扫描并展开 ISO 容器（默认不展开） |
 | `--depth <N>` | 容器嵌套层数（0 = 不展开任何容器；1 = 展开一层容器且其内部目录树完整收录；2+ = 同时展开内嵌容器；默认 1） |
 | `--checksum <spec>` | 校验算法：逗号分隔列表（`sha256`/`md5`/`crc32`）、`all`（全部）或 `none`（不计算）；可重复出现并自动去重；裸 `--checksum` = all |
+| `--progress` / `--no-progress` | 扫描进度输出（实时显示当前扫描路径与已扫文件/目录计数；交互终端每秒刷新同一行，输出重定向时每 5 秒一行；默认开启，`--no-progress` 关闭；`--quiet` 自动关闭） |
 | `--verbose` / `--debug` / `--quiet` | 日志级别 |
 
 扫描默认记录每个条目的修改时间与创建时间（创建时间在平台无法

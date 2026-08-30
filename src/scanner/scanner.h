@@ -4,6 +4,7 @@
 #include "database/database.h"
 #include "catalog/catalog.h"
 #include <atomic>
+#include <chrono>
 #include <functional>
 #include <filesystem>
 
@@ -54,6 +55,14 @@ private:
 
     static constexpr int BATCH_SIZE = 1000;
 
+    // Progress reporting state
+    bool show_progress_ = false;
+    bool tty_ = false;
+    bool progress_printed_ = false;
+    size_t progress_line_len_ = 0;
+    std::chrono::steady_clock::time_point scan_start_;
+    std::chrono::steady_clock::time_point last_progress_;
+
     // Internal scan methods
     Result<int64_t> scan_directory(int64_t source_id, int64_t parent_id,
                                     const std::filesystem::path& dir_path,
@@ -71,6 +80,13 @@ private:
     void expand_container_if_needed(int64_t entry_id,
                                     const std::filesystem::path& file_path,
                                     const ScanOptions& options);
+
+    // Progress output helpers
+    void detect_tty();
+    void report_progress(const std::filesystem::path& path);
+    void report_hashing(const std::filesystem::path& path, int64_t bytes);
+    void progress_line(const std::string& text);
+    void clear_progress();
 
     // Determine source type from path
     SourceType detect_source_type(const std::string& path);

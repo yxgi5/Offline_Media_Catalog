@@ -61,6 +61,8 @@ static void print_usage(const char* prog) {
         "  --checksum <spec> Checksums to compute: comma-separated list of\n"
         "                    sha256|md5|crc32, or all/none; repeatable\n"
         "                    (bare --checksum = all; none disables)\n"
+        "  --progress        Show live scan progress (default on)\n"
+        "  --no-progress     Disable progress output\n"
         "  --verbose         Verbose output\n"
         "  --debug           Debug output\n"
         "  --quiet           Minimal output\n";
@@ -180,6 +182,11 @@ static bool parse_checksum_flags(const std::vector<std::string>& args,
             Logger::instance().set_level(LogLevel::Debug);
         } else if (arg == "--quiet") {
             Logger::instance().set_level(LogLevel::Quiet);
+            options.show_progress = false;
+        } else if (arg == "--progress") {
+            options.show_progress = true;
+        } else if (arg == "--no-progress") {
+            options.show_progress = false;
         } else {
             // Non-flag argument: path
             return true;

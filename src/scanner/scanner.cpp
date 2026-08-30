@@ -4,8 +4,14 @@
 #include "container/provider.h"
 #include "platform/file_util.h"
 #include <chrono>
+#include <cstdio>
 #include <fstream>
+#include <iostream>
 #include <sstream>
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 namespace offcat {
 
@@ -13,6 +19,71 @@ Scanner::Scanner(Database& db, CancellationManager& cancel)
     : db_(db), cancel_(cancel),
       source_mgr_(db), entry_mgr_(db),
       container_mgr_(db), checksum_mgr_(db), scan_mgr_(db) {}
+
+// Detect whether stdout is an interactive console: interactive terminals
+// get an in-place progress line (carriage return), redirected output gets
+// plain lines at a lower rate.
+void Scanner::detect_tty() {
+#ifdef _WIN32
+    HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE);
+    DWORD mode = 0;
+    tty_ = (h != INVALID_HANDLE_VALUE) && GetConsoleMode(h, &mode);
+#else
+    tty_ = isatty(fileno(stdout));
+#endif
+}
+
+// Emit one progress line (throttled).  Interactive terminals redraw the
+// same line with '\r'; redirected output appends plain lines every few
+// seconds so logs stay readable.
+void Scanner::progress_line(const std::string& text) {
+    if (tty_) {
+        std::cout << '\r' << text << std::flush;
+        progress_line_len_ = text.size();
+        progress_printed_ = true;
+    } else {
+        std::cout << text << '\n' << std::flush;
+    }
+}
+
+void Scanner::clear_progress() {
+    if (tty_ && progress_printed_) {
+        std::cout << '\r' << std::string(progress_line_len_, ' ')
+                  << '\r' << std::flush;
+        progress_printed_ = false;
+    }
+}
+
+void Scanner::report_progress(const std::filesystem::path& path) {
+    if (!show_progress_) return;
+    auto now = std::chrono::steady_clock::now();
+    auto interval = tty_ ? std::chrono::seconds(1)
+                         : std::chrono::seconds(5);
+    if (now - last_progress_ < interval) return;
+    last_progress_ = now;
+    auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+        now - scan_start_).count();
+    std::ostringstream oss;
+    oss << "[" << elapsed << "s] " << path.string()
+        << " - " << files_scanned_ << " files, " << dirs_scanned_ << " dirs";
+    progress_line(oss.str());
+}
+
+void Scanner::report_hashing(const std::filesystem::path& path,
+                             int64_t bytes) {
+    if (!show_progress_) return;
+    auto now = std::chrono::steady_clock::now();
+    if (now - last_progress_ < std::chrono::seconds(1)) return;
+    last_progress_ = now;
+    auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+        now - scan_start_).count();
+    std::ostringstream oss;
+    oss << "[" << elapsed << "s] hashing: " << path.string();
+    if (bytes > 0) {
+        oss << " (" << (bytes / (1024 * 1024)) << " MB)";
+    }
+    progress_line(oss.str());
+}
 
 SourceType Scanner::detect_source_type(const std::string& path) {
     std::error_code ec;
@@ -71,6 +142,13 @@ Result<int64_t> Scanner::scan_source(const std::string& path,
     }
 
     LOG_INFO("Scanning source: " + source_name + " (" + path + ")");
+
+    // Progress reporting setup (throttled path/stat output; see
+    // report_progress / report_hashing)
+    show_progress_ = options.show_progress;
+    scan_start_ = std::chrono::steady_clock::now();
+    last_progress_ = scan_start_;
+    detect_tty();
 
     // Begin the transaction early so the replacement removal, the
     // source/scan records and every entry commit atomically.  On failure
@@ -162,10 +240,12 @@ Result<int64_t> Scanner::scan_source(const std::string& path,
                     // A replacement scan was cancelled: roll back so the
                     // previous catalog data is preserved.
                     txn.rollback();
+                    clear_progress();
                     LOG_INFO("Scan cancelled, previous data preserved");
                     return Error{0, "Scan cancelled"};
                 }
                 // Cancellation: stop gracefully, keep partial data
+                clear_progress();
                 LOG_INFO("Scan cancelled by user");
             } else {
                 scan_mgr_.finish(scan_id, ScanStatus::Failed);
@@ -210,6 +290,8 @@ Result<int64_t> Scanner::scan_source(const std::string& path,
         ? ScanStatus::Cancelled : ScanStatus::Completed;
     scan_mgr_.finish(scan_id, final_status);
 
+    clear_progress();
+
     LOG_INFO("Scan complete: " + std::to_string(files_scanned_) + " files, " +
              std::to_string(dirs_scanned_) + " directories, " +
              std::to_string(errors_) + " errors");
@@ -244,6 +326,8 @@ Result<int64_t> Scanner::scan_directory(int64_t source_id, int64_t parent_id,
         std::string name = entry.path().filename().string();
 
         if (name.empty()) continue;
+
+        report_progress(entry.path());
 
         EntryData entry_data;
         entry_data.source_id = source_id;
@@ -369,6 +453,8 @@ Result<int64_t> Scanner::scan_directory(int64_t source_id, int64_t parent_id,
 Result<int64_t> Scanner::scan_file_entry(int64_t source_id, int64_t parent_id,
                                            const std::filesystem::path& file_path,
                                            const ScanOptions& options) {
+    report_progress(file_path);
+
     EntryData entry_data;
     entry_data.source_id = source_id;
     entry_data.parent_id = parent_id;
@@ -472,6 +558,7 @@ Result<bool> Scanner::compute_checksums(int64_t entry_id,
 
     constexpr size_t BUFFER_SIZE = 65536;
     std::vector<uint8_t> buffer(BUFFER_SIZE);
+    int64_t hashed = 0;
 
     while (file.good()) {
         file.read(reinterpret_cast<char*>(buffer.data()), BUFFER_SIZE);
@@ -480,6 +567,8 @@ Result<bool> Scanner::compute_checksums(int64_t entry_id,
             for (auto& engine : engines) {
                 engine->update(buffer.data(), static_cast<size_t>(bytes_read));
             }
+            hashed += bytes_read;
+            report_hashing(file_path, hashed);
         }
     }
 

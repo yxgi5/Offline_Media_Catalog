@@ -145,6 +145,7 @@ struct ScanOptions {
     std::vector<ChecksumAlgorithm> checksum_algorithms;
     bool scan_containers = false;
     int max_container_depth = 1;
+    bool show_progress = true;  // Live progress output during the scan
 };
 
 // ── Container options ───────────────────────────────────────────────
