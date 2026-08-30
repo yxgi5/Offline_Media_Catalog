@@ -161,6 +161,7 @@ offcat serve --web-root ./my_frontend catalog.db
 
 ## 文档
 
+- [项目规格（Spec）](docs/spec.md)
 - [架构](docs/architecture.md)
 - [数据库 Schema](docs/catalog-schema.md)
 - [Provider API](docs/provider-api.md)
