@@ -54,7 +54,11 @@ jobs:
 
   build-linux:
     name: Build Linux binary
-    runs-on: ubuntu-latest
+    # Build on an older LTS so the binary links against an older glibc
+    # (2.35) and runs on Ubuntu 22.04+ systems; ubuntu-latest (24.04,
+    # glibc 2.39) would only run on 24.04+. Migrate to the next LTS
+    # before this image is removed (deprecation ~2027).
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
 

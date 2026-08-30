@@ -5,6 +5,13 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# -std=c++17 defines __STRICT_ANSI__, which hides POSIX declarations
+# (isatty, fileno, localtime_r ...) in glibc/newlib headers unless
+# _POSIX_C_SOURCE is defined.
+if(UNIX)
+    add_compile_definitions(_POSIX_C_SOURCE=200809L)
+endif()
+
 # ── Options ──────────────────────────────────────────────────────────
 option(OFFCAT_BUILD_TESTS "Build test suite" ON)
 option(OFFCAT_USE_OPENSSL "Use OpenSSL for SHA-256/MD5 (fallback to embedded)" OFF)

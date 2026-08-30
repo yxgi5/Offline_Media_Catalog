@@ -1,3 +1,10 @@
+// POSIX feature test macro: -std=c++17 implies __STRICT_ANSI__, which makes
+// glibc/cygwin headers hide POSIX functions (isatty, fileno) behind
+// _POSIX_C_SOURCE. Must be defined before any system header is included.
+#ifndef _WIN32
+#define _POSIX_C_SOURCE 200809L
+#endif
+
 #include "scanner/scanner.h"
 #include "core/checksum.h"
 #include "core/logger.h"
@@ -11,6 +18,8 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#else
+#include <unistd.h>  // isatty()/fileno()
 #endif
 
 namespace offcat {
