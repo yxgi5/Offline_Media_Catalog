@@ -134,5 +134,6 @@ ContainerOptions.max_depth 传递；UDF 解析器内部另有深度上限 64
 | name_encoding / name_confidence 持久化 | 未实现 | 三级容错解析已实现，但解析方式元数据未入库（见 catalog-schema.md 预留字段） |
 | available_filesystems 记录 | 未实现 | 多文件系统回退已实现，检测到的文件系统集合未记录（见 catalog-schema.md） |
 | fingerprint 预留 API | 未预留 | spec 允许 Phase 1 不实现，当前无任何指纹相关接口 |
+| 按格式容器深度（`--depth-format`） | 未实现 | 当前 `--depth` 对所有容器类型全局统一；未来引入多格式容器（ZIP/TAR 等）时按类型覆盖（如 `iso=3,zip=1`）。深度由 scanner 在调用点查 per-format 表决定，Provider 接口无需改动；CLI 语法与 Scan.options JSON 届时一并扩展 |
 
 以上条目不阻塞 Phase 1 核心功能（扫描/搜索/ISO 展开/校验码），属于后续补齐项。
