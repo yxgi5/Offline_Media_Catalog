@@ -45,11 +45,12 @@ endif()
 
 # GoogleTest (tests only)
 if(OFFCAT_BUILD_TESTS)
-    # Prefer a local googletest checkout when available (avoids
-    # network download); otherwise fall back to FetchContent URL.
+    # Prefer a local googletest checkout/extraction when available
+    # (avoids network download); otherwise fall back to the vendored
+    # zip in third_party/ so offline builds stay reproducible.
     if(NOT DEFINED GOOGLETEST_SOURCE_DIR)
-        if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/googletest")
-            set(GOOGLETEST_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/googletest")
+        if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/googletest-1.14.0")
+            set(GOOGLETEST_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/googletest-1.14.0")
         elseif(EXISTS "$ENV{USERPROFILE}/Desktop/googletest")
             set(GOOGLETEST_SOURCE_DIR "$ENV{USERPROFILE}/Desktop/googletest")
         endif()
@@ -59,7 +60,8 @@ if(OFFCAT_BUILD_TESTS)
     endif()
     FetchContent_Declare(
         googletest
-        URL https://github.com/google/googletest/archive/refs/tags/v1.14.0.zip
+        URL ${CMAKE_CURRENT_SOURCE_DIR}/third_party/googletest-1.14.0.zip
+        URL_HASH SHA256=8FE1D2F21DC7A1F5A01008D36F3296A7ABFA77C1E3AC05D90EDC290F2B039F54
         DOWNLOAD_EXTRACT_TIMESTAMP TRUE
     )
     set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
@@ -150,5 +152,11 @@ if(OFFCAT_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/providers
     )
     include(GoogleTest)
-    gtest_discover_tests(offcat_tests)
+    if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.25)
+        # Windows Defender scans freshly linked binaries, which can exceed
+        # the default 5 s discovery timeout on a first build.
+        gtest_discover_tests(offcat_tests DISCOVERY_TIMEOUT 60)
+    else()
+        gtest_discover_tests(offcat_tests)
+    endif()
 endif()

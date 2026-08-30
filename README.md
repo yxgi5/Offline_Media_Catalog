@@ -4,6 +4,15 @@
 
 即使硬盘已经拔掉，仍然可以搜索离线存储的内容：文件名、目录结构、ISO 内部文件、校验码。
 
+## 项目背景
+
+市面上已有的离线存储索引工具，在使用中各有明显短板：
+
+- **whereist**：对 FUSE 挂载盘（如 securefs 加密盘）支持不完善，扫描这类存储经常失败或漏扫；
+- **wincatlog**：ISO 解析能力太差，对非标准镜像常解析错误，中文文件名频繁乱码，目录结构也容易错乱。
+
+我们的需求是：既能可靠扫描 FUSE 挂载的存储，又能直接解析 ISO 镜像（含非标准 UDF），同时保证中文路径不乱码——现有工具都无法满足，于是产生了 Offcat 这个项目。
+
 ## 功能
 
 - SQLite Catalog（WAL、FTS5、UTF-8）
@@ -26,9 +35,10 @@
 
 - CMake ≥ 3.16
 - C++17 编译器：GCC / MinGW-w64 ≥ 9、MSVC ≥ 2019、Clang ≥ 10
-- SQLite3 amalgamation 与 GoogleTest 通过 CMake FetchContent 自动下载；
-  也可放入 `third_party/` 实现离线构建（`third_party/sqlite-amalgamation-3460100/`、
-  `third_party/googletest/`）
+- SQLite3 amalgamation 与 GoogleTest 的 zip 包均随仓库维护在 `third_party/`（
+  `third_party/sqlite-amalgamation-3460100.zip`、`third_party/googletest-1.14.0.zip`），
+  通过 CMake FetchContent 解压使用，无需联网即可构建；也可手动解压到
+  `third_party/` 下对应的源码目录跳过解压步骤
 
 > 平台状态：Windows（MinGW-w64）已实测通过；Linux / macOS 代码已做平台隔离
 > （平台逻辑集中在 `src/platform/`、无 Win32 依赖），但尚未经 CI 验证。

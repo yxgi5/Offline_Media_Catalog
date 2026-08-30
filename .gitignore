@@ -5,6 +5,9 @@ build/
 # so offline builds stay reproducible)
 third_party/sqlite-amalgamation-3460100/
 
+# GoogleTest extracted copy (the .zip in third_party is tracked)
+third_party/googletest-1.14.0/
+
 # Runtime artifacts
 *.db
 *.db-wal
