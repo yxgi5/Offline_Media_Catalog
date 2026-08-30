@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Offcat Catalog Viewer</title>
+<style>
+  :root { --bg:#f5f6f8; --panel:#fff; --line:#e2e4e8; --text:#24292f;
+          --muted:#6a737d; --accent:#2f6fdb; --vtag:#9a6bff; --ctag:#2f9e6e; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:"Segoe UI",system-ui,sans-serif; background:var(--bg);
+         color:var(--text); height:100vh; display:flex; flex-direction:column; }
+  header { display:flex; align-items:center; gap:12px; padding:10px 16px;
+           background:var(--panel); border-bottom:1px solid var(--line); }
+  header h1 { font-size:16px; margin:0 8px 0 0; white-space:nowrap; }
+  #stats { color:var(--muted); font-size:12px; white-space:nowrap; }
+  #search { flex:1; max-width:520px; padding:6px 10px; border:1px solid var(--line);
+            border-radius:6px; font-size:14px; }
+  main { flex:1; display:flex; min-height:0; }
+  #sidebar { width:340px; min-width:220px; background:var(--panel);
+             border-right:1px solid var(--line); overflow:auto; padding:8px; }
+  #content { flex:1; overflow:auto; padding:16px; }
+  ul.tree { list-style:none; margin:0; padding-left:16px; }
+  ul.tree.root { padding-left:0; }
+  .node { cursor:pointer; padding:2px 6px; border-radius:4px; white-space:nowrap;
+          display:flex; align-items:center; gap:4px; }
+  .node:hover { background:#eef1f5; }
+  .node.selected { background:#dbe7fb; }
+  .twist { width:14px; display:inline-block; color:var(--muted); font-size:10px; }
+  .icon { width:16px; text-align:center; }
+  .f-dir { color:#d08a00; } .f-file { color:#8b949e; } .f-sym { color:#b3478f; }
+  .tag { font-size:10px; padding:0 5px; border-radius:8px; margin-left:4px; }
+  .tag.v { background:#efe9ff; color:var(--vtag); }
+  .tag.c { background:#e3f5ec; color:var(--ctag); }
+  .tag.s { background:#fdeef4; color:var(--muted); }
+  table.detail { border-collapse:collapse; width:100%; max-width:760px; }
+  table.detail td { padding:5px 10px; border-bottom:1px solid var(--line);
+                    vertical-align:top; }
+  table.detail td:first-child { color:var(--muted); width:110px; white-space:nowrap; }
+  code { background:#f1f3f5; padding:1px 6px; border-radius:4px;
+         font-family:Consolas,monospace; font-size:12px; word-break:break-all; }
+  .res { padding:8px 10px; border-bottom:1px solid var(--line); cursor:pointer; }
+  .res:hover { background:#f0f3f7; }
+  .res .p { color:var(--muted); font-size:12px; }
+  .res .n { font-weight:600; }
+  .err { color:#c62828; padding:12px; }
+  #srcsel { padding:6px; border:1px solid var(--line); border-radius:6px;
+            font-size:13px; max-width:180px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>📚 Offcat</h1>
+  <select id="srcsel"><option value="">全部 Source</option></select>
+  <span id="stats"></span>
+  <input id="search" placeholder="FTS5 搜索文件名/路径（如 install.wim、readme）" autocomplete="off">
+</header>
+<main>
+  <div id="sidebar"><ul class="tree root" id="tree"></ul></div>
+  <div id="content"><p style="color:var(--muted)">选择左侧条目查看详情，或输入关键词搜索。</p></div>
+</main>
+<script>
+"use strict";
+const treeEl = document.getElementById("tree");
+const contentEl = document.getElementById("content");
+const srcsel = document.getElementById("srcsel");
+const searchInput = document.getElementById("search");
+const statsEl = document.getElementById("stats");
+let sources = [];
+let loaded = new Set();   // entry ids whose children are loaded
+let selected = null;
+
+async function getJSON(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  return r.json();
+}
+
+function fmtSize(n) {
+  if (n <= 0) return "";
+  const u = ["B","KB","MB","GB","TB"];
+  let i = 0, v = n;
+  while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+  return v.toFixed(v >= 100 ? 0 : 1) + " " + u[i];
+}
+
+function iconFor(type, isVirtual) {
+  const m = {directory:"📁", file:"📄", symlink:"🔗", other:"❔"};
+  return m[type] || "❔";
+}
+
+function nodeLabel(e) {
+  let s = iconFor(e.type, e.is_virtual) + " " + e.name;
+  if (e.is_virtual) s += '<span class="tag v">virtual</span>';
+  if (e.is_container) s += '<span class="tag c">' + e.container_type + "</span>";
+  return s;
+}
+
+function mkNode(e) {
+  const li = document.createElement("li");
+  const div = document.createElement("div");
+  div.className = "node";
+  div.innerHTML = '<span class="twist">' + (e.is_dir || e.is_container ? "▸" : "") + "</span>" +
+                  '<span class="icon">' + iconFor(e.type, e.is_virtual) + "</span>" +
+                  '<span class="f-' + e.type + '">' + escapeHtml(e.name) + "</span>" +
+                  (e.is_virtual ? '<span class="tag v">virtual</span>' : "") +
+                  (e.is_container ? '<span class="tag c">iso</span>' : "");
+  div.addEventListener("click", async (ev) => {
+    ev.stopPropagation();
+    selectNode(div, e);
+    if ((e.is_dir || e.is_container) && !loaded.has(e.id)) {
+      loaded.add(e.id);
+      const ul = document.createElement("ul");
+      ul.className = "tree";
+      li.appendChild(ul);
+      try {
+        const kids = await getJSON("/api/tree?parent_id=" + e.id);
+        for (const k of kids) ul.appendChild(mkNode(k));
+        div.querySelector(".twist").textContent = kids.length ? "▾" : "";
+      } catch (err) { ul.innerHTML = '<li class="err">加载失败</li>'; }
+    } else if (e.is_dir || e.is_container) {
+      const twist = div.querySelector(".twist");
+      const ul = li.querySelector("ul");
+      if (ul) {
+        ul.style.display = ul.style.display === "none" ? "" : "none";
+        twist.textContent = ul.style.display === "none" ? "▸" : "▾";
+      }
+    }
+  });
+  li.appendChild(div);
+  return li;
+}
+
+function selectNode(div, e) {
+  if (selected) selected.classList.remove("selected");
+  selected = div;
+  selected.classList.add("selected");
+  if (e.id < 0) {
+    // Source node (negative id sentinel)
+    const s = sources.find(x => x.id === -e.id);
+    if (s) showSource(s);
+    return;
+  }
+  showEntry(e.id);
+}
+
+function showSource(s) {
+  contentEl.innerHTML =
+    '<table class="detail">' +
+    row("名称", escapeHtml(s.name)) +
+    row("类型", s.type) +
+    row("扫描路径", '<code>' + escapeHtml(s.path) + "</code>") +
+    row("条目数", s.entries) +
+    "</table>";
+}
+
+function escapeHtml(s) {
+  return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+
+function row(label, val) {
+  return "<tr><td>" + label + "</td><td>" + (val === "" ? '<span style="color:var(--muted)">—</span>' : val) + "</td></tr>";
+}
+
+async function showEntry(id) {
+  contentEl.innerHTML = "<p>加载中…</p>";
+  try {
+    const e = await getJSON("/api/entry?id=" + id);
+    const tags = (e.is_virtual ? '<span class="tag v">virtual</span> ' : "") +
+                 (e.container ? '<span class="tag c">' + escapeHtml(e.container.type) + "</span> " : "");
+    let cs = "";
+    if (e.checksums && e.checksums.length) {
+      cs = e.checksums.map(c =>
+        "<div><code>" + c.algorithm + "</code> " + c.value +
+        " <span style='color:var(--muted);font-size:11px'>(" + new Date(c.calculated_at*1000).toLocaleString() + ")</span></div>"
+      ).join("");
+    } else {
+      cs = '<span style="color:var(--muted)">未计算</span>';
+    }
+    const table =
+      '<table class="detail">' +
+      row("名称", escapeHtml(e.name) + " " + tags) +
+      row("类型", e.type) +
+      row("完整路径", '<code>' + escapeHtml(e.path) + "</code>") +
+      row("大小", fmtSize(e.size)) +
+      row("修改时间", e.mtime ? new Date(e.mtime*1000).toLocaleString() : "") +
+      row("创建时间", e.ctime ? new Date(e.ctime*1000).toLocaleString() : "") +
+      row("校验码", cs) +
+      (e.mode ? row("权限 mode", "0" + e.mode.toString(8)) : "") +
+      (e.attributes ? row("属性 attributes", e.attributes) : "") +
+      (e.is_virtual ? row("来源", "容器内虚拟条目") : "") +
+      "</table>";
+    contentEl.innerHTML = table;
+  } catch (err) {
+    contentEl.innerHTML = '<p class="err">加载失败: ' + escapeHtml(String(err)) + "</p>";
+  }
+}
+
+async function loadSources() {
+  try {
+    const [st, srcs] = await Promise.all([
+      getJSON("/api/stats"), getJSON("/api/sources")
+    ]);
+    statsEl.textContent = st.sources + " Source · " + st.entries + " Entries · " +
+                          st.containers + " Containers";
+    sources = srcs;
+    srcsel.innerHTML = '<option value="">全部 Source</option>' +
+      srcs.map(s => '<option value="' + s.id + '">' + escapeHtml(s.name) + " (" + s.entries + ")</option>").join("");
+    treeEl.innerHTML = "";
+    loaded.clear();
+    for (const s of srcs) {
+      const li = document.createElement("li");
+      const div = document.createElement("div");
+      div.className = "node";
+      div.innerHTML = '<span class="twist">▸</span>' +
+                      '<span class="icon">💾</span>' +
+                      '<span class="f-dir">' + escapeHtml(s.name) + '</span>' +
+                      '<span class="tag c">' + escapeHtml(s.type) + "</span>";
+      div.addEventListener("click", async () => {
+        selectNode(div, {id: -s.id});
+        loaded.add(-s.id);
+        const ul = document.createElement("ul");
+        ul.className = "tree";
+        li.appendChild(ul);
+        const kids = await getJSON("/api/tree?parent_id=0&source_id=" + s.id);
+        for (const k of kids) ul.appendChild(mkNode(k));
+        div.querySelector(".twist").textContent = kids.length ? "▾" : "";
+      });
+      li.appendChild(div);
+      treeEl.appendChild(li);
+    }
+  } catch (err) {
+    statsEl.textContent = "加载失败: " + err;
+  }
+}
+
+let searchTimer = null;
+searchInput.addEventListener("input", () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(runSearch, 250);
+});
+searchInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { clearTimeout(searchTimer); runSearch(); }
+});
+
+async function runSearch() {
+  const q = searchInput.value.trim();
+  if (!q) { contentEl.innerHTML = '<p style="color:var(--muted)">输入关键词开始搜索。</p>'; return; }
+  contentEl.innerHTML = "<p>搜索中…</p>";
+  try {
+    const res = await getJSON("/api/search?q=" + encodeURIComponent(q) + "&limit=200");
+    if (res.error) { contentEl.innerHTML = '<p class="err">' + escapeHtml(res.error) + "</p>"; return; }
+    if (!res.length) { contentEl.innerHTML = '<p style="color:var(--muted)">无结果。</p>'; return; }
+    contentEl.innerHTML = '<p style="color:var(--muted)">' + res.length + " 条结果：</p>" +
+      res.map(r =>
+        '<div class="res" onclick="showEntry(' + r.entry_id + ')">' +
+        '<span class="n">' + escapeHtml(r.entry_name) + "</span> " +
+        (r.is_virtual ? '<span class="tag v">virtual</span>' : "") +
+        (r.container_type ? '<span class="tag c">' + escapeHtml(r.container_type) + "</span>" : "") +
+        '<div class="p">' + escapeHtml(r.source_name) + " / " + escapeHtml(r.full_path) + "</div>" +
+        "</div>").join("");
+  } catch (err) {
+    contentEl.innerHTML = '<p class="err">搜索失败: ' + escapeHtml(String(err)) + "</p>";
+  }
+}
+
+loadSources();
+</script>
+</body>
+</html>

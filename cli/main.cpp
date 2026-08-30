@@ -45,7 +45,7 @@ static void print_usage(const char* prog) {
         "  " << prog << " scan [options] <path> <catalog.db>     Scan a source into the catalog\n"
         "  " << prog << " search <catalog.db> <query>            Search filenames/paths\n"
         "  " << prog << " info <catalog.db>                      Show catalog statistics\n"
-        "  " << prog << " serve [--port <N>] <catalog.db>        Read-only web viewer (default port 8080)\n"
+        "  " << prog << " serve [--port <N>] [--web-root <dir>] <catalog.db>  Read-only web viewer (default port 8080)\n"
         "\n"
         "Scan options:\n"
         "  --containers      Scan and expand ISO containers\n"

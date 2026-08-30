@@ -100,15 +100,39 @@ target_include_directories(offcat_providers PUBLIC
 )
 target_link_libraries(offcat_providers PUBLIC offcat_core)
 
+# ── offcat_server (static library: HTTP viewer service) ─────────────
+# Embed web/index.html into web_resources.h so the single binary stays
+# self-contained; --web-root overrides it at runtime.
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/web/index.html" WEB_INDEX_HTML)
+string(REPLACE "\\" "\\\\" WEB_INDEX_HTML "${WEB_INDEX_HTML}")
+string(REPLACE "\"" "\\\"" WEB_INDEX_HTML "${WEB_INDEX_HTML}")
+string(REPLACE "\n" "\\n" WEB_INDEX_HTML "${WEB_INDEX_HTML}")
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/web_resources.h.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/web_resources.h"
+    @ONLY
+)
+
+file(GLOB_RECURSE OFFCAT_SERVER_SOURCES
+    src/server/*.cpp
+)
+
+add_library(offcat_server STATIC ${OFFCAT_SERVER_SOURCES})
+target_include_directories(offcat_server PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_BINARY_DIR}
+)
+target_link_libraries(offcat_server PUBLIC offcat_core)
+if(WIN32)
+    target_link_libraries(offcat_server PUBLIC ws2_32)
+endif()
+
 # ── offcat (CLI executable) ─────────────────────────────────────────
 add_executable(offcat
     cli/main.cpp
     cli/serve.cpp
 )
-target_link_libraries(offcat PRIVATE offcat_core offcat_providers)
-if(WIN32)
-    target_link_libraries(offcat PRIVATE ws2_32)
-endif()
+target_link_libraries(offcat PRIVATE offcat_core offcat_providers offcat_server)
 
 # ── Tests ────────────────────────────────────────────────────────────
 if(OFFCAT_BUILD_TESTS)
@@ -117,6 +141,7 @@ if(OFFCAT_BUILD_TESTS)
     target_link_libraries(offcat_tests PRIVATE
         offcat_core
         offcat_providers
+        offcat_server
         GTest::gtest_main
     )
     target_include_directories(offcat_tests PRIVATE

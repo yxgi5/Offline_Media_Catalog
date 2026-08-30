@@ -23,9 +23,11 @@
 | database | src/database/ | SQLite 封装、Schema、事务、Statement |
 | scanner | src/scanner/ | 文件系统扫描、取消、搜索 |
 | container | src/container/ | Provider 接口、Registry、VirtualTreeWriter |
+| server | src/server/ | 只读 Web 服务：HTTP 层 + Viewer（JSON API）+ 前端资源 |
 | filesystem | src/filesystem/ | 跨平台文件系统操作（预留） |
 | platform | src/platform/ | 平台相关代码（预留） |
 | providers/iso | providers/iso/ | ISO9660 / Joliet / UDF 解析；Rock Ridge (SUSP/RRIP) 属性与 rr_moved 还原 |
+| web | web/ | 内嵌前端源文件（index.html，经 CMake 嵌入二进制） |
 
 ## 核心原则
 
