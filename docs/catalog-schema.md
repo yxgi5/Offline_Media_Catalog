@@ -115,3 +115,18 @@ break existing data (via ALTER TABLE ADD COLUMN or new extension tables):
 设计约束：这些字段必须允许 NULL；不得作为 Entry 身份的一部分。
 
 Design constraints: these fields must be nullable and must never be part of an entry's identity.
+
+## 第三方扩展约定 / Third-Party Extension Notes
+
+本数据库格式是开放的：任何工具都可以用标准 SQLite 接口添加自己的表或列，无需修改本程序。以下约定帮助扩展与既有数据长期共存。
+
+This database format is open: any tool may add its own tables or columns through the standard SQLite interface, without modifying this program. The following conventions help extensions coexist with the existing data over time.
+
+- **重扫语义**：对同一路径重新扫描时采用替换语义——旧 Source 的整棵树（source/entry/container/checksum/scan/FTS）先删除再重建，因此 `entry.id` 与 `source.id` 在重扫后**不保证稳定**。
+  Rescan semantics: rescanning the same path replaces the old data — the whole tree (source/entry/container/checksum/scan/FTS) is deleted and rebuilt, so `entry.id` and `source.id` are **not stable** across rescans.
+- **批注锚点**：以 `entry_id`/`source_id` 为锚的扩展数据在重扫后会悬挂失效；若扩展表声明 `REFERENCES entry(id)` 且未指定 `ON DELETE CASCADE`/`SET NULL`，重扫会因外键约束违反而整体回滚。临时批注（重扫后失效可接受）可直接使用裸 `entry_id` 列；需要跨重扫存活的扩展应以路径为锚并自行重新挂接。
+  Anchor for annotations: extension rows keyed by `entry_id`/`source_id` become dangling after a rescan; a `REFERENCES entry(id)` foreign key without `ON DELETE CASCADE`/`SET NULL` makes the rescan fail and roll back. For throwaway annotations (loss on rescan is acceptable) a plain `entry_id` column is fine; extensions that must survive rescans should anchor on paths and re-attach themselves.
+- **命名空间**：请为扩展表/列使用独立前缀（如 `mytool_xxx`），避免与未来官方新增的表/列冲突；官方表名（source、entry、container、checksum、scan、entry_fts、schema_version）为保留名。
+  Namespacing: use a distinct prefix for extension tables/columns (e.g. `mytool_xxx`) to avoid clashing with future official ones; the official table names (source, entry, container, checksum, scan, entry_fts, schema_version) are reserved.
+- **写入并发**：Web 查看器在自身连接上以只读模式（`PRAGMA query_only`）打开数据库，不影响其他进程通过自己的连接写入；WAL 模式支持一写多读。
+  Write concurrency: the web viewer opens the database read-only (`PRAGMA query_only`) on its own connection; other processes may write through their own connections — WAL supports one writer with concurrent readers.
