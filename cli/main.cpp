@@ -16,6 +16,11 @@
 #include <sstream>
 #include <iomanip>
 
+#ifdef _WIN32
+#include <windows.h>
+#include <shellapi.h>
+#endif
+
 // ISO provider registration (defined in providers/iso/iso_provider.cpp)
 namespace offcat {
 void register_iso_provider();
@@ -49,7 +54,10 @@ static void print_usage(const char* prog) {
         "\n"
         "Scan options:\n"
         "  --containers      Scan and expand ISO containers\n"
-        "  --depth <N>       Max container depth (default 1)\n"
+        "  --depth <N>       Container nesting depth (0 = do not expand;\n"
+                "                    1 = expand top-level containers with full\n"
+                "                    contents; 2+ also expands containers nested\n"
+                "                    inside them; default 1)\n"
         "  --checksum <spec> Checksums to compute: comma-separated list of\n"
         "                    sha256|md5|crc32, or all/none; repeatable\n"
         "                    (bare --checksum = all; none disables)\n"
@@ -358,17 +366,48 @@ static int cmd_info(const std::vector<std::string>& args) {
 
 // ── Main ────────────────────────────────────────────────────────────
 
+// On Windows, PowerShell/cmd pass arguments encoded in the ANSI code
+// page (e.g. GBK), but the codebase assumes UTF-8 paths.  Rebuild argv
+// from GetCommandLineW so non-ASCII arguments arrive as UTF-8 regardless
+// of the console code page; std::filesystem (and our own UTF-8 helpers)
+// then decode them correctly.
+#ifdef _WIN32
+static std::vector<std::string> utf8_argv() {
+    int argc = 0;
+    LPWSTR* wargv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    std::vector<std::string> result;
+    if (!wargv) return result;
+    for (int i = 0; i < argc; i++) {
+        int len = WideCharToMultiByte(CP_UTF8, 0, wargv[i], -1,
+                                      nullptr, 0, nullptr, nullptr);
+        std::string s;
+        if (len > 1) {
+            s.resize(len - 1);
+            WideCharToMultiByte(CP_UTF8, 0, wargv[i], -1, s.data(), len,
+                                nullptr, nullptr);
+        }
+        result.push_back(s);
+    }
+    LocalFree(wargv);
+    return result;
+}
+#endif
+
 int main(int argc, char* argv[]) {
-    if (argc < 2) {
-        print_usage(argv[0]);
+    std::vector<std::string> args_all;
+#ifdef _WIN32
+    args_all = utf8_argv();
+    if (args_all.empty()) args_all.assign(argv, argv + argc);
+#else
+    args_all.assign(argv, argv + argc);
+#endif
+    if (args_all.size() < 2) {
+        print_usage(args_all.empty() ? argv[0] : args_all[0].c_str());
         return 1;
     }
 
-    std::string command = argv[1];
-    std::vector<std::string> args;
-    for (int i = 2; i < argc; i++) {
-        args.push_back(argv[i]);
-    }
+    const std::string& command = args_all[1];
+    std::vector<std::string> args(args_all.begin() + 2, args_all.end());
 
     if (command == "create") {
         return cmd_create(args);

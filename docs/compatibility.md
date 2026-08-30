@@ -106,6 +106,23 @@ ISO。常见问题与处理：
 | 分区映射缺失 | 回退到分区 0 |
 | Metadata Partition (UDF 2.50) | 预留 metadata file 支持 |
 
+### genisoimage 非标布局容错
+
+genisoimage `-udf` 产出的镜像布局不规范，常见四类问题与对应策略：
+
+| 问题 | 表现 | 策略 |
+|------|------|------|
+| LVD/PD 指针垃圾 | FSD 指针为 0、PD partition start 无效 | anchor 后扫描定位真实 FSD，rebasing partition 0 为 FSD 扇区 |
+| 残留“假根” FE | FSD 后第一个目录 FE 的 extent 极小（88 字节），只有 2 条垃圾 FID | 取前 4 个目录 FE 候选逐一解析，选条目最多者作根 |
+| 目录大小少报 | FE 的 information_length 小于真实目录数据（如 88 vs 3712 字节） | 目录数据按连续字节流解析，FID 放不下时自动扩展读取下一扇区 |
+| FID 跨扇区 / 续段扇区前部垃圾 | FID 头落在扇区尾部、名字延续到下一扇区；续段扇区 @0-7 是上一项名字的尾部+填充，FID 流从 @8 开始 | 连续字节流解析天然衔接；仅当 FID 头不完整（截断）时才扩展，并以 padding（全零）结束流 |
+
+解析原则：
+
+- 目录数据视为**连续字节流**，FID 可跨越 2048 字节扇区边界，不做逐扇区独立解析
+- 仅“FID 放不下当前已读数据”时扩展读入下一扇区（截断驱动），避免误吞相邻目录/文件数据
+- 非 FID tag（含全零 padding）视为流结束，不把垃圾扇区解析为条目
+
 ## 禁止事项
 
 - 不依赖 Windows Mount-DiskImage / Linux mount / macOS hdiutil

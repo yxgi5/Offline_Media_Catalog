@@ -23,7 +23,9 @@ public:
 `scan()` 契约（ISO Provider 已落实）：
 
 - 一次 `scan()` 调用完成整个容器树的展开，无需外层多次调用
-- 按 `options.max_depth` 递归展开目录（ISO9660/Joliet/UDF 统一）
+- 容器内部目录树始终完整展开（仅受防死循环上限约束）；
+  `options.max_depth` 限制的是容器*嵌套*层数（ISO 内的 ISO），
+  嵌套镜像提取到临时文件后递归调用 `scan_udf`/`scan_iso9660`
 - Rock Ridge 镜像的 rr_moved 占位符还原在 Provider 内部完成，
   外层看到的始终是真实目录树
 - 无法解析的子目录/条目记录 warning，不中断整树
@@ -69,9 +71,11 @@ struct ContainerOptions {
 
 已实现：
 
-- `max_depth`：ISO Provider 按此值递归展开容器内目录树；
+- `max_depth`：容器嵌套层数。ISO Provider 在 walk 中发现
+  `.iso`/`.img`/`.udf` 文件且 `current_depth < max_depth` 时，把
+  该文件提取到临时文件并递归展开；目录树本身不受此值限制。
   CLI `--depth` → ScanOptions.max_container_depth → 此处
-- `current_depth`：Scanner 展开入口处设为 1（当前 ISO 内部深度语义）
+- `current_depth`：Scanner 展开入口处设为 1；嵌套展开时逐层 +1
 
 未实现（`max_entries` / `max_virtual_size` / `max_scan_time_seconds`）：
 字段已预留，ISO Provider 暂不限制；UDF 解析器内部有深度上限 64

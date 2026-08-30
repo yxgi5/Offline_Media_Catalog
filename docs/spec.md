@@ -332,7 +332,8 @@ HDD
 - ISO/UDF → 展开
 - 其他容器 → 暂不支持
 
-未来可以实现 `max_container_depth = 2`：
+`max_container_depth` 已实现（`--depth` 0/1/2+）：0 不展开任何容器，
+1 展开一层容器且内部目录树完整收录，2+ 逐层展开内嵌容器：
 
 ```text
 ISO

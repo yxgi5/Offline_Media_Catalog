@@ -14,7 +14,7 @@
 - ISO Provider：ISO9660 / Joliet / UDF（直接解析，不依赖系统挂载）
 - Rock Ridge 属性支持（SUSP/RRIP）：NM 长名、PX 权限、TF 时间戳、SL 符号链接、CE 续区
 - rr_moved 深目录还原（超过 8 层目录的 Rock Ridge 镜像正确恢复目录树）
-- 容器目录递归展开，深度可配置（`--depth`，单文件 ISO 源同样支持）
+- 容器目录树完整展开，嵌套容器层数可配置（`--depth`，单文件 ISO 源同样支持）
 - OSTA Compressed Unicode 解析（含非标准 UDF 兼容性恢复）
 - 可选校验码：SHA-256 / MD5 / CRC32
 - 扫描取消（Ctrl+C）与错误恢复
@@ -83,7 +83,7 @@ offcat scan /mnt/archive catalog.db
 # 扫描目录并展开其中的 ISO 容器（默认展开 1 层）
 offcat scan --containers /mnt/archive catalog.db
 
-# 展开容器并递归到更深层目录（depth=2：ISO 内目录的下一层）
+# 展开容器并递归展开内嵌容器（depth=2：一层 + 二层容器都展开）
 offcat scan --containers --depth 2 /mnt/archive catalog.db
 
 # 计算校验码（单参数入口，逗号分隔复合）
@@ -100,7 +100,7 @@ offcat scan --containers --depth 2 movie.iso catalog.db
 | 选项 | 说明 |
 |------|------|
 | `--containers` | 扫描并展开 ISO 容器（默认不展开） |
-| `--depth <N>` | 容器内目录最大递归深度（默认 1） |
+| `--depth <N>` | 容器嵌套层数（0 = 不展开任何容器；1 = 展开一层容器且其内部目录树完整收录；2+ = 同时展开内嵌容器；默认 1） |
 | `--checksum <spec>` | 校验算法：逗号分隔列表（`sha256`/`md5`/`crc32`）、`all`（全部）或 `none`（不计算）；可重复出现并自动去重；裸 `--checksum` = all |
 | `--verbose` / `--debug` / `--quiet` | 日志级别 |
 

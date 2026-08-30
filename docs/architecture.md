@@ -95,6 +95,21 @@ scan_source(path, options)
 单文件源都经过 `expand_container_if_needed` → ProviderRegistry →
 ISO Provider（见 [Provider API](provider-api.md)）。
 
+## Windows 非 ASCII 命令行参数
+
+PowerShell/cmd 启动 native 进程时，命令行参数按系统 ANSI 代码页
+（如 GBK）编码，而代码内部一律使用 UTF-8（核心原则第 8 条）：若直接
+使用 `main(argc, argv)` 的窄字符串，中文路径/搜索词会因代码页解码
+失败而乱码或抛 `filesystem_error`。
+
+处理方式（cli/main.cpp 的 `utf8_argv()`）：
+
+- 通过 `GetCommandLineW` + `CommandLineToArgvW` 获取宽字符参数
+- 用 `WideCharToMultiByte(CP_UTF8)` 转换为 UTF-8 重建 argv
+
+该转换与控制台代码页无关，保证任意语言路径（含中文）在扫描、搜索
+等所有子命令中正确传递。
+
 ## ISO Provider 流程
 
 ```
@@ -109,12 +124,16 @@ scan(container_entry_id, db, options)
       → SUSP/RRIP 解析：NM 名优先、PX 权限、TF 时间、SL 符号链接、CE 续区
       → 定位 rr_moved/.rr_moved，占位符（0x02-0x09）还原为真实目录
       → 无法还原的占位符跳过
-  → 按 options.max_depth 递归展开目录树（ISO9660/Joliet/UDF 统一，默认 1 层）
+  → 目录树始终完整展开（防死循环上限 256 层），写入虚拟条目
+  → 发现 `.iso`/`.img`/`.udf` 文件且当前嵌套层数 < max_depth 时，
+    提取到临时文件后递归展开（ISO Provider 内部完成）
   → 虚拟条目经 VirtualTreeWriter 写入（is_virtual=1 + FTS5）
 ```
 
-递归深度由 CLI `--depth` → ScanOptions.max_container_depth →
-ContainerOptions.max_depth 传递；UDF 解析器内部另有深度上限 64
+嵌套层数由 CLI `--depth` → ScanOptions.max_container_depth →
+ContainerOptions.max_depth 传递；`--depth 0` 不展开任何容器，
+`--depth 1`（默认）展开一层容器且其内部目录树完整收录，
+`--depth 2+` 逐层展开内嵌容器。UDF 解析器内部另有深度上限 64
 防止损坏镜像导致无限递归。
 
 ## 错误处理

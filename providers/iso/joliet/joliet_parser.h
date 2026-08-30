@@ -33,6 +33,9 @@ public:
 
     const IsoVolumeInfo& volume_info() const { return volume_info_; }
 
+    // Read raw sector data
+    bool read_sector(int64_t sector, uint8_t* buffer, size_t count);
+
 private:
     std::string filepath_;
     void* file_handle_ = nullptr;
@@ -44,9 +47,6 @@ private:
     // Decode a Joliet file identifier (UCS-2, UTF-16BE) to UTF-8
     static std::string decode_joliet_name(const uint8_t* data, size_t length,
                                           bool is_directory);
-
-    // Read raw sector data
-    bool read_sector(int64_t sector, uint8_t* buffer, size_t count);
 };
 
 } // namespace offcat

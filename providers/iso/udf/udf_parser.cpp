@@ -400,9 +400,11 @@ bool UdfParser::read_directory(const UdfLongAd& icb, std::vector<UdfEntry>& out,
     if (abs_sector < 0) return false;
 
     int64_t sectors_needed = (size + UDF_SECTOR_SIZE - 1) / UDF_SECTOR_SIZE;
-    if (sectors_needed <= 0 || sectors_needed > 8192) return false;
+    if (sectors_needed <= 0) sectors_needed = 1;
+    if (sectors_needed > 8192) return false;
 
-    std::vector<uint8_t> dir_data(static_cast<size_t>(sectors_needed) * UDF_SECTOR_SIZE);
+    std::vector<uint8_t> dir_data;
+    dir_data.resize(static_cast<size_t>(sectors_needed) * UDF_SECTOR_SIZE);
     for (int64_t s = 0; s < sectors_needed; s++) {
         if (!read_sector(abs_sector + s,
                          dir_data.data() + static_cast<size_t>(s) * UDF_SECTOR_SIZE,
@@ -411,56 +413,81 @@ bool UdfParser::read_directory(const UdfLongAd& icb, std::vector<UdfEntry>& out,
         }
     }
 
-    // Iterate File Identifier Descriptors sector by sector
+    // genisoimage-style images may under-report the directory size in
+    // the File Entry (e.g. 88 bytes for a root that actually spans
+    // several sectors) and may split File Identifier Descriptors
+    // across sector boundaries (a FID header that ends near the end of
+    // a sector, with the file name continuing in the next sector).
+    // Treat the directory data as one contiguous byte stream: whenever
+    // a FID does not fit into the data read so far, extend by one more
+    // sector and keep going.  Padding (zeroes) ends the stream.
     out.clear();
+    size_t offset = 0;
 
-    for (int64_t s = 0; s < sectors_needed; s++) {
-        size_t sector_base = static_cast<size_t>(s) * UDF_SECTOR_SIZE;
-        size_t offset = 0;
+    while (true) {
+        if (offset + 38 > dir_data.size()) break;  // Stream ended
 
-        while (offset + 38 <= UDF_SECTOR_SIZE) {
-            const uint8_t* fid_data = dir_data.data() + sector_base + offset;
+        const uint8_t* fid_data = dir_data.data() + offset;
 
-            // Skip padding (zeroed region)
-            if (fid_data[0] == 0 && fid_data[1] == 0 &&
-                fid_data[2] == 0 && fid_data[3] == 0) {
-                break;  // Padding to end of sector
-            }
-
-            // FID record length is implicit: 38 + len_fi + len_impl_use
-            uint8_t len_fi = fid_data[19];
-            uint16_t len_impl_use = u16le(fid_data + 36);
-            size_t fid_total = 38 + len_fi + len_impl_use;
-            if (offset + fid_total > UDF_SECTOR_SIZE) break;
-
-            uint8_t file_chars = fid_data[18];
-            bool is_dir_flag = (file_chars & 0x02) != 0;
-            bool is_parent = (file_chars & 0x08) != 0;
-            bool is_deleted = (file_chars & 0x04) != 0;
-
-            if (!is_parent && !is_deleted) {
-                std::string name;
-                if (len_fi > 0) {
-                    auto decoded = decode_udf_name(
-                        fid_data + 38 + len_impl_use, len_fi);
-                    name = decoded.utf8;
-                }
-
-                if (!name.empty() && name != "." && name != "..") {
-                    UdfEntry entry;
-                    entry.name = name;
-                    entry.is_directory = is_dir_flag;
-                    entry.extent_location = u32le(fid_data + 24);
-                    entry.partition_ref = u16le(fid_data + 28);
-                    entry.size = u32le(fid_data + 20) & 0x3FFFFFFF;
-                    entry.mtime = mtime;
-                    out.push_back(std::move(entry));
-                }
-            }
-
-            // Align to 4-byte boundary
-            offset += (fid_total + 3) & ~3;
+        // Padding (zeroed region) marks the end of the stream
+        if (fid_data[0] == 0 && fid_data[1] == 0 &&
+            fid_data[2] == 0 && fid_data[3] == 0) {
+            break;
         }
+
+        // Anything that does not start with a FID tag is not part of
+        // the directory stream (e.g. leftover garbage in an
+        // under-allocated extent)
+        if (u16le(fid_data) != TAG_FID) break;
+
+        // FID record length is implicit: 38 + len_fi + len_impl_use
+        uint8_t len_fi = fid_data[19];
+        uint16_t len_impl_use = u16le(fid_data + 36);
+        size_t fid_total = 38 + len_fi + len_impl_use;
+
+        if (offset + fid_total > dir_data.size()) {
+            // The FID (header or name) runs past the end of the data
+            // read so far: pull in the next sector and retry.
+            if (sectors_needed >= 8192) break;
+            uint8_t probe[UDF_SECTOR_SIZE];
+            if (!read_sector(abs_sector + sectors_needed, probe, 1)) break;
+            bool nonzero = false;
+            for (int i = 0; i < UDF_SECTOR_SIZE && !nonzero; i++) {
+                if (probe[i] != 0) nonzero = true;
+            }
+            if (!nonzero) break;  // All zeroes: stream really ended
+            dir_data.insert(dir_data.end(), probe, probe + UDF_SECTOR_SIZE);
+            sectors_needed++;
+            continue;
+        }
+
+        uint8_t file_chars = fid_data[18];
+        bool is_dir_flag = (file_chars & 0x02) != 0;
+        bool is_parent = (file_chars & 0x08) != 0;
+        bool is_deleted = (file_chars & 0x04) != 0;
+
+        if (!is_parent && !is_deleted) {
+            std::string name;
+            if (len_fi > 0) {
+                auto decoded = decode_udf_name(
+                    fid_data + 38 + len_impl_use, len_fi);
+                name = decoded.utf8;
+            }
+
+            if (!name.empty() && name != "." && name != "..") {
+                UdfEntry entry;
+                entry.name = name;
+                entry.is_directory = is_dir_flag;
+                entry.extent_location = u32le(fid_data + 24);
+                entry.partition_ref = u16le(fid_data + 28);
+                entry.size = u32le(fid_data + 20) & 0x3FFFFFFF;
+                entry.mtime = mtime;
+                out.push_back(std::move(entry));
+            }
+        }
+
+        // Align to 4-byte boundary
+        offset += (fid_total + 3) & ~3;
     }
 
     return true;
@@ -546,7 +573,13 @@ bool UdfParser::locate_root_in_head(std::vector<UdfEntry>& out) {
         partition_starts_[0] = fsd_abs;
     }
 
-    // 3. The first directory File Entry after the FSD is the root.
+    // 3. genisoimage may emit several directory File Entries before the
+    // real root (a leftover FE with a tiny/under-allocated extent).
+    // Pick the candidate whose directory stream holds the most entries
+    // (e.g. the true root spans 2 sectors with 61 FIDs, while the
+    // leftover only has a couple of garbage FIDs).
+    std::vector<UdfEntry> best;
+    int candidates = 0;
     for (int64_t s = fsd_abs + 1; s < fsd_abs + kScan; s++) {
         UdfTag tag;
         if (!read_tag(s, tag)) continue;
@@ -560,9 +593,15 @@ bool UdfParser::locate_root_in_head(std::vector<UdfEntry>& out) {
         root_icb.extent_length = UDF_SECTOR_SIZE;
         root_icb.location = s - partition_starts_[0];
         root_icb.partition_ref = 0;
-        return read_directory(root_icb, out, 0);
+
+        std::vector<UdfEntry> tmp;
+        if (!read_directory(root_icb, tmp, 0)) continue;
+        if (tmp.size() > best.size()) best = std::move(tmp);
+        if (++candidates >= 4) break;  // Enough candidates
     }
-    return false;
+    if (best.empty()) return false;
+    out = std::move(best);
+    return true;
 }
 
 bool UdfParser::read_allocation_extent(int64_t sector, int64_t length,

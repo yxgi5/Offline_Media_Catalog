@@ -243,6 +243,71 @@ std::vector<uint8_t> build_rr_image() {
     return img;
 }
 
+// Build a parent image that embeds build_rr_image() as a file, to
+// exercise nested-container expansion:
+//   sector 16: PVD with root record (extent 18)
+//   sector 17: volume descriptor terminator
+//   sector 18: root        -> nested-dir, nested.iso (child image bytes)
+//   sector 19: nested-dir  -> note.txt
+//   sector 20..: child ISO bytes (build_rr_image, 23 sectors)
+//   sector 43: "NOTE" file data
+std::vector<uint8_t> build_nested_image() {
+    const int64_t SZ = kSectorSize;
+    auto child = build_rr_image();
+    const int kChildStart = 20;
+    const int kNoteSector =
+        kChildStart + static_cast<int>(child.size()) / 2048;
+    const int kTotal = kNoteSector + 1;
+
+    std::vector<uint8_t> img;
+    img.resize(kTotal * 2048, 0);
+
+    // ── sector kRoot: root ──
+    {
+        std::vector<uint8_t> sec(2048, 0);
+        size_t off = 0;
+        auto put = [&](const std::vector<uint8_t>& rec) {
+            std::memcpy(sec.data() + off, rec.data(), rec.size());
+            off += rec.size();
+        };
+        put(make_dir_record({kRoot, SZ, 0x02, std::string(1, '\0')}));
+        put(make_dir_record({kRoot, SZ, 0x02, std::string(1, '\x01')}));
+        put(make_dir_record({19, SZ, 0x02, "NESTED_",
+                             susp_nm("nested-dir")}));
+        put(make_dir_record({kChildStart, static_cast<int64_t>(child.size()),
+                             0x00, "NESTED.ISO;1",
+                             susp_nm("nested.iso")}));
+        std::memcpy(img.data() + kRoot * 2048, sec.data(), 2048);
+    }
+
+    // ── sector 19: nested-dir ──
+    {
+        std::vector<uint8_t> sec(2048, 0);
+        size_t off = 0;
+        auto put = [&](const std::vector<uint8_t>& rec) {
+            std::memcpy(sec.data() + off, rec.data(), rec.size());
+            off += rec.size();
+        };
+        put(make_dir_record({19, SZ, 0x02, std::string(1, '\0')}));
+        put(make_dir_record({19, SZ, 0x02, std::string(1, '\x01')}));
+        put(make_dir_record({kNoteSector, 4, 0x00, "NOTE.TXT;1",
+                             susp_nm("note.txt")}));
+        std::memcpy(img.data() + 19 * 2048, sec.data(), 2048);
+    }
+
+    // ── child ISO bytes ──
+    std::memcpy(img.data() + kChildStart * 2048, child.data(), child.size());
+
+    // ── "NOTE" file data ──
+    std::memcpy(img.data() + kNoteSector * 2048, "NOTE", 4);
+
+    // ── terminator + PVD (root extent 18, same as build_rr_image) ──
+    std::memcpy(img.data() + kTerm * 2048, child.data() + kTerm * 2048, 2048);
+    std::memcpy(img.data() + kPvd * 2048, child.data() + kPvd * 2048, 2048);
+
+    return img;
+}
+
 void write_file(const std::filesystem::path& path,
                 const std::vector<uint8_t>& data) {
     std::ofstream f(path, std::ios::binary);
@@ -385,11 +450,13 @@ namespace {
 struct ScanResult {
     std::vector<EntryData> children_of_container;
     std::vector<EntryData> all_children;
+    int container_count = 0;
 };
 
 void scan_rr_image(int max_depth, const std::string& db_path,
                    const std::filesystem::path& img_dir,
-                   ScanResult& out) {
+                   ScanResult& out,
+                   const std::vector<uint8_t>& image) {
     Database db;
     ASSERT_TRUE(is_ok(db.create(db_path)));
 
@@ -409,6 +476,8 @@ void scan_rr_image(int max_depth, const std::string& db_path,
     auto iso_id = em.insert(iso_entry);
     ASSERT_TRUE(is_ok(iso_id));
 
+    write_file(img_dir / "test.iso", image);
+
     IsoProvider provider;
     ContainerOptions opts;
     opts.max_depth = max_depth;
@@ -422,6 +491,10 @@ void scan_rr_image(int max_depth, const std::string& db_path,
     ASSERT_TRUE(is_ok(all));
     out.all_children = get_ok(all);
 
+    auto containers = ContainerManager(db).get_all();
+    ASSERT_TRUE(is_ok(containers));
+    out.container_count = static_cast<int>(get_ok(containers).size());
+
     db.close();
 }
 
@@ -433,10 +506,9 @@ TEST(IsoProviderRrTest, RestoresPlaceholderAndRecurses) {
     std::filesystem::path img_dir =
         std::filesystem::temp_directory_path() / "offcat_rr_img";
     std::filesystem::create_directories(img_dir);
-    write_file(img_dir / "test.iso", build_rr_image());
 
     ScanResult res;
-    scan_rr_image(2, db_path, img_dir, res);
+    scan_rr_image(2, db_path, img_dir, res, build_rr_image());
 
     // Root level: rr_moved, deep-dir (restored), top-dir
     ASSERT_EQ(res.children_of_container.size(), 3u);
@@ -453,7 +525,7 @@ TEST(IsoProviderRrTest, RestoresPlaceholderAndRecurses) {
         for (unsigned char c : e.name) EXPECT_GE(c, 0x20);
     }
 
-    // Recursion (depth=2): readme.txt under top-dir
+    // Full tree: readme.txt under top-dir, link under deep-dir
     bool found_readme = false, found_link = false, found_link_symlink = false;
     bool found_deep_mode = false;
     for (const auto& e : res.all_children) {
@@ -491,22 +563,91 @@ TEST(IsoProviderRrTest, RestoresPlaceholderAndRecurses) {
     std::filesystem::remove_all(img_dir);
 }
 
-TEST(IsoProviderRrTest, DepthOneDoesNotRecurse) {
+TEST(IsoProviderRrTest, DepthOneExpandsFullTree) {
+    // max_depth=1: the directory tree inside the container is always
+    // expanded completely; only containers nested *inside* the image
+    // are limited by the depth.
     std::string db_path = temp_db_path("offcat_rr_depth1.db");
     std::filesystem::remove(db_path);
     std::filesystem::path img_dir =
         std::filesystem::temp_directory_path() / "offcat_rr_img1";
     std::filesystem::create_directories(img_dir);
-    write_file(img_dir / "test.iso", build_rr_image());
 
     ScanResult res;
-    scan_rr_image(1, db_path, img_dir, res);
+    scan_rr_image(1, db_path, img_dir, res, build_rr_image());
 
-    // Only the container's direct children are inserted.
+    // Container's direct children: rr_moved, deep-dir (restored), top-dir
     EXPECT_EQ(res.children_of_container.size(), 3u);
+
+    // Full tree at depth 1: files inside nested directories appear.
+    bool found_readme = false, found_link = false;
     for (const auto& e : res.all_children) {
-        EXPECT_TRUE(e.name != "readme.txt" && e.name != "link");
+        if (e.name == "readme.txt") found_readme = true;
+        if (e.name == "link") found_link = true;
     }
+    EXPECT_TRUE(found_readme);
+    EXPECT_TRUE(found_link);
+    // The top-level container record is registered by the scanner, not
+    // by provider.scan(); 0 means no nested container was expanded.
+    EXPECT_EQ(res.container_count, 0);
+
+    cleanup_db(db_path);
+    std::filesystem::remove_all(img_dir);
+}
+
+TEST(IsoProviderRrTest, NestedIsoNotExpandedAtDepthOne) {
+    std::string db_path = temp_db_path("offcat_rr_nest1.db");
+    std::filesystem::remove(db_path);
+    std::filesystem::path img_dir =
+        std::filesystem::temp_directory_path() / "offcat_rr_nest1";
+    std::filesystem::create_directories(img_dir);
+
+    ScanResult res;
+    scan_rr_image(1, db_path, img_dir, res, build_nested_image());
+
+    // Parent tree fully expanded: note.txt under nested-dir appears.
+    bool found_note = false, found_nested = false, found_readme = false;
+    for (const auto& e : res.all_children) {
+        if (e.name == "note.txt") found_note = true;
+        if (e.name == "nested.iso") {
+            found_nested = true;
+            EXPECT_EQ(e.type, EntryType::File);
+        }
+        if (e.name == "readme.txt") found_readme = true;
+    }
+    EXPECT_TRUE(found_note);
+    EXPECT_TRUE(found_nested);
+    // The nested image is catalogued as a plain file, not expanded.
+    EXPECT_FALSE(found_readme);
+    EXPECT_EQ(res.container_count, 0);
+
+    cleanup_db(db_path);
+    std::filesystem::remove_all(img_dir);
+}
+
+TEST(IsoProviderRrTest, NestedIsoExpandedAtDepthTwo) {
+    std::string db_path = temp_db_path("offcat_rr_nest2.db");
+    std::filesystem::remove(db_path);
+    std::filesystem::path img_dir =
+        std::filesystem::temp_directory_path() / "offcat_rr_nest2";
+    std::filesystem::create_directories(img_dir);
+
+    ScanResult res;
+    scan_rr_image(2, db_path, img_dir, res, build_nested_image());
+
+    // Both images expanded: readme.txt lives inside the nested ISO.
+    bool found_readme = false, found_link = false, found_note = false;
+    for (const auto& e : res.all_children) {
+        if (e.name == "readme.txt") found_readme = true;
+        if (e.name == "link") found_link = true;
+        if (e.name == "note.txt") found_note = true;
+    }
+    EXPECT_TRUE(found_readme);
+    EXPECT_TRUE(found_link);
+    EXPECT_TRUE(found_note);
+    // Only the nested container is registered by the provider (the
+    // top-level one is registered by the scanner).
+    EXPECT_EQ(res.container_count, 1);
 
     cleanup_db(db_path);
     std::filesystem::remove_all(img_dir);
@@ -545,7 +686,10 @@ TEST(IsoProviderRrTest, ScannerExpandsSingleFileSource) {
     EntryManager em(db);
     auto entries = em.get_by_source(get_ok(result));
     ASSERT_TRUE(is_ok(entries));
-    EXPECT_EQ(get_ok(entries).size(), 7u);  // test.iso + 6 virtual
+    // test.iso + 7 virtual: rr_moved (with its deep-dir entry), restored
+    // deep-dir, its link, top-dir, readme.txt.  The tree is expanded
+    // completely at depth 2.
+    EXPECT_EQ(get_ok(entries).size(), 8u);
 
     bool found_readme = false;
     for (const auto& e : get_ok(entries)) {
