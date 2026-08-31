@@ -53,6 +53,12 @@ endif()
 # ── Dependencies ─────────────────────────────────────────────────────
 include(FetchContent)
 
+# DOWNLOAD_EXTRACT_TIMESTAMP was added in CMake 3.24; on older versions the
+# unknown keyword would be swallowed into URL_HASH and break the hash check.
+if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.24)
+    set(OFFCAT_EP_EXTRACT_TIMESTAMP DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+endif()
+
 # SQLite3 amalgamation (prefer a local copy in third_party/, fall back to download)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/sqlite-amalgamation-3460100/sqlite3.c")
     set(FETCHCONTENT_SOURCE_DIR_SQLITE3 "${CMAKE_CURRENT_SOURCE_DIR}/third_party/sqlite-amalgamation-3460100")
@@ -61,7 +67,7 @@ FetchContent_Declare(
     sqlite3
     URL ${CMAKE_CURRENT_SOURCE_DIR}/third_party/sqlite-amalgamation-3460100.zip
     URL_HASH SHA3_256=af6aae8d3eccc608857c63cf56efbadc70da48b5c719446b353ed88dded1e288
-    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    ${OFFCAT_EP_EXTRACT_TIMESTAMP}
 )
 FetchContent_MakeAvailable(sqlite3)
 
@@ -97,7 +103,7 @@ if(OFFCAT_BUILD_TESTS)
         googletest
         URL ${CMAKE_CURRENT_SOURCE_DIR}/third_party/googletest-1.14.0.zip
         URL_HASH SHA256=8FE1D2F21DC7A1F5A01008D36F3296A7ABFA77C1E3AC05D90EDC290F2B039F54
-        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+        ${OFFCAT_EP_EXTRACT_TIMESTAMP}
     )
     set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
     FetchContent_MakeAvailable(googletest)
