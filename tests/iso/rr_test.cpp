@@ -673,7 +673,6 @@ TEST(IsoProviderRrTest, ScannerExpandsSingleFileSource) {
     CancellationManager cancel;
     Scanner scanner(db, cancel);
     ScanOptions options;
-    options.scan_containers = true;
     options.max_container_depth = 2;
 
     // Scanning the ISO file itself (not a directory containing it)
@@ -697,19 +696,25 @@ TEST(IsoProviderRrTest, ScannerExpandsSingleFileSource) {
     }
     EXPECT_TRUE(found_readme);
 
-    // Without --containers the ISO is catalogued but not expanded
+    // With the default depth (0) the ISO is discovered but not expanded
     std::string db2_path = temp_db_path("offcat_rr_scanner2.db");
     std::filesystem::remove(db2_path);
     Database db2;
     ASSERT_TRUE(is_ok(db2.create(db2_path)));
     CancellationManager cancel2;
     Scanner scanner2(db2, cancel2);
-    ScanOptions options2;  // scan_containers = false
+    ScanOptions options2;  // max_container_depth = 0 (default)
     auto result2 = scanner2.scan_source((img_dir / "test.iso").string(), options2);
     ASSERT_TRUE(is_ok(result2));
     auto entries2 = EntryManager(db2).get_by_source(get_ok(result2));
     ASSERT_TRUE(is_ok(entries2));
     EXPECT_EQ(get_ok(entries2).size(), 1u);
+
+    // Discovery still runs: the ISO is registered as a container even
+    // though its contents were not expanded
+    auto containers2 = ContainerManager(db2).get_all();
+    ASSERT_TRUE(is_ok(containers2));
+    EXPECT_EQ(get_ok(containers2).size(), 1u);
     db2.close();
 
     db.close();

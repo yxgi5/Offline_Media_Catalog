@@ -143,8 +143,8 @@ struct ScanData {
 struct ScanOptions {
     bool compute_checksum = false;
     std::vector<ChecksumAlgorithm> checksum_algorithms;
-    bool scan_containers = false;
-    int max_container_depth = 1;
+    // 0 = discover containers only, no expansion (default)
+    int max_container_depth = 0;
     bool show_progress = true;  // Live progress output during the scan
 };
 

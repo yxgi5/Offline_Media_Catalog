@@ -390,7 +390,7 @@ TEST(ScanManagerTest, InsertAndFinish) {
 #else
         "0.1.0";
 #endif
-    scan.options = "{\"checksum\":[\"crc32\"],\"containers\":false}";
+    scan.options = "{\"max_container_depth\":0,\"checksum\":[\"crc32\"]}";
     scan.status = ScanStatus::InProgress;
 
     auto scan_id = scan_mgr.insert(scan);

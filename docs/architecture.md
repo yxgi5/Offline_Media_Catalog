@@ -130,7 +130,7 @@ scan_source(path, options)
   → 路径是目录：递归遍历（std::filesystem）
       → 每个 Entry 读取元数据并批量插入（每 1000 条 checkpoint）
       → 同步更新 FTS5 索引
-      → 启用 --containers 时：ISO 文件 → Container 记录 → Provider 展开
+      → ISO 文件总是注册 Container 记录；--depth >= 1 时 Provider 展开
       → 启用 checksum 时：流式计算 SHA-256/MD5/CRC32
   → 路径是单个文件（.iso/.img）：同样注册 Container 并展开
   → 提交事务
@@ -196,16 +196,17 @@ scan(container_entry_id, db, options)
 ```
 
 嵌套层数由 CLI `--depth` → ScanOptions.max_container_depth →
-ContainerOptions.max_depth 传递；`--depth 0` 不展开任何容器，
-`--depth 1`（默认）展开一层容器且其内部目录树完整收录，
+ContainerOptions.max_depth 传递；`--depth 0`（默认）仅识别容器、
+不展开，`--depth 1` 展开一层容器且其内部目录树完整收录，
 `--depth 2+` 逐层展开内嵌容器。UDF 解析器内部另有深度上限 64
 防止损坏镜像导致无限递归。
 
 Nesting depth flows from the CLI `--depth` → ScanOptions.max_container_depth
-→ ContainerOptions.max_depth; `--depth 0` expands nothing, `--depth 1`
-(default) expands one level with its full inner tree, and `--depth 2+`
-expands nested containers level by level. The UDF parser additionally enforces
-an internal depth limit of 64 to prevent infinite recursion on corrupt images.
+→ ContainerOptions.max_depth; `--depth 0` (default) discovers containers only
+without expansion, `--depth 1` expands one level with its full inner tree, and
+`--depth 2+` expands nested containers level by level. The UDF parser
+additionally enforces an internal depth limit of 64 to prevent infinite
+recursion on corrupt images.
 
 ## 错误处理 / Error Handling
 

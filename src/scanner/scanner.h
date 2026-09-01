@@ -75,7 +75,7 @@ private:
                                     const std::filesystem::path& file_path,
                                     const ScanOptions& options);
 
-    // Expand ISO containers (shared by directory and single-file scans)
+    // Discover and expand ISO containers (shared by directory and single-file scans)
     void expand_container_if_needed(int64_t entry_id,
                                     const std::filesystem::path& file_path,
                                     const ScanOptions& options);

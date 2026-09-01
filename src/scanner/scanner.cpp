@@ -235,8 +235,7 @@ Result<int64_t> Scanner::scan_source(const std::string& path,
 
     // Build options JSON
     std::ostringstream opts;
-    opts << "{\"containers\":" << (options.scan_containers ? "true" : "false")
-         << ",\"max_container_depth\":" << options.max_container_depth
+    opts << "{\"max_container_depth\":" << options.max_container_depth
          << ",\"checksum\":[";
     bool first = true;
     for (const auto& algo : options.checksum_algorithms) {
@@ -528,8 +527,9 @@ Result<int64_t> Scanner::scan_file_entry(int64_t source_id, int64_t parent_id,
 void Scanner::expand_container_if_needed(
     int64_t entry_id, const std::filesystem::path& file_path,
     const ScanOptions& options) {
-    if (!options.scan_containers) return;
-
+    // Discovery always runs (spec §16): ISO files are registered as
+    // containers even when expansion is disabled, so `info` can show
+    // them. Expansion below is gated by max_container_depth.
     std::string ext = file_path.extension().string();
     std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
     if (ext != ".iso" && ext != ".img") return;

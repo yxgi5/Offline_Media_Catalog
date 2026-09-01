@@ -383,22 +383,20 @@ HDD
             └── file.dat
 ```
 
-但是默认扫描深度 `max_container_depth = 1`。
+但是默认扫描深度 `max_container_depth = 0`（仅识别容器，不展开）。
 
-The default scan depth is `max_container_depth = 1`.
+The default scan depth is `max_container_depth = 0` (containers are discovered but not expanded).
 
 第一阶段策略 / Phase 1 strategy:
 
 - 普通文件系统 → 扫描 / plain filesystems → scan
-- ISO/UDF → 展开 / ISO/UDF → expand
+- ISO/UDF → 识别 + 可选展开 / ISO/UDF → discover, expand when requested
 - 其他容器 → 暂不支持 / other containers → not supported yet
 
-`max_container_depth` 已实现（`--depth` 0/1/2+）：0 不展开任何容器，
+`max_container_depth` 已实现（`--depth` 0/1/2+）：0 仅识别容器、不展开（默认），
 1 展开一层容器且内部目录树完整收录，2+ 逐层展开内嵌容器：
 
-`max_container_depth` is implemented (`--depth` 0/1/2+): 0 expands nothing,
-1 expands one level with the full inner tree, 2+ expands nested containers
-level by level:
+`max_container_depth` is implemented (`--depth` 0/1/2+): 0 discovers containers only, no expansion (default); 1 expands one level with the full inner tree; 2+ expands nested containers level by level:
 
 ```text
 ISO
@@ -411,9 +409,14 @@ ISO
 
 Even without expanding a container, `foo.iso` must still be recognizable as `container_type = ISO`.
 
-因此 **Discovery** 和 **Expansion** 是两个不同概念。未来用户可以：
+因此 **Discovery** 和 **Expansion** 是两个不同概念。Discovery 已实现：
+默认（`--depth 0`）扫描即识别容器并写入 `container` 表；Expansion 由
+`--depth 1+` 控制。未来用户还可以：
 
-So **discovery** and **expansion** are two distinct concepts. In the future users can:
+So **discovery** and **expansion** are two distinct concepts. Discovery is
+implemented: a scan at the default `--depth 0` still recognizes containers
+and records them in the `container` table; expansion is gated by `--depth 1+`.
+In the future users can also:
 
 - 只发现容器，不扫描内部 / discover containers without scanning inside
 - 对已经 Catalog 的 Container 重新展开 / re-expand already-cataloged containers
@@ -616,7 +619,6 @@ CREATE TABLE scan (
 ```json
 {
     "checksum": ["sha256"],
-    "containers": true,
     "max_container_depth": 1
 }
 ```
@@ -644,10 +646,10 @@ offcat scan /mnt/archive catalog.db
 
 By default it records: names, directories, sizes, timestamps and attributes.
 
-启用容器 / Enabling containers:
+展开容器 / Expanding containers:
 
 ```bash
-offcat scan --containers /mnt/archive catalog.db
+offcat scan --depth 1 /mnt/archive catalog.db
 ```
 
 启用 SHA-256 / Enabling SHA-256:

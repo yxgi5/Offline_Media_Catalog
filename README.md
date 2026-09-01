@@ -133,35 +133,34 @@ offcat create catalog.db
 ### 2. 扫描 / Scanning
 
 ```bash
-# 扫描目录（不含 ISO 容器）
-# Scan a directory (no ISO containers)
+# 扫描目录（ISO 容器默认只识别、不展开）
+# Scan a directory (ISO containers are discovered but not expanded by default)
 offcat scan /mnt/archive catalog.db
 
-# 扫描目录并展开其中的 ISO 容器（默认展开 1 层）
-# Scan and expand ISO containers inside (1 level by default)
-offcat scan --containers /mnt/archive catalog.db
+# 展开一层容器（内部目录树完整收录）
+# Expand one level of ISO containers (full inner tree)
+offcat scan --depth 1 /mnt/archive catalog.db
 
-# 展开容器并递归展开内嵌容器（depth=2：一层 + 二层容器都展开）
+# 递归展开内嵌容器（depth=2：一层 + 二层容器都展开）
 # Expand containers recursively (depth=2: first- and second-level containers)
-offcat scan --containers --depth 2 /mnt/archive catalog.db
+offcat scan --depth 2 /mnt/archive catalog.db
 
 # 计算校验码（单参数入口，逗号分隔复合）
 # Compute checksums (single-flag entry, comma-separated combos)
-offcat scan --containers --checksum crc32 /mnt/archive catalog.db
-offcat scan --containers --checksum sha256,crc32 /mnt/archive catalog.db
-offcat scan --containers --checksum all /mnt/archive catalog.db   # 三种全部 / all three
+offcat scan --depth 1 --checksum crc32 /mnt/archive catalog.db
+offcat scan --depth 1 --checksum sha256,crc32 /mnt/archive catalog.db
+offcat scan --depth 1 --checksum all /mnt/archive catalog.db   # 三种全部 / all three
 
 # 直接扫描单个 ISO 文件（也会展开容器内部，无需目录包裹）
 # Scan a single ISO file directly (containers are expanded too, no parent dir needed)
-offcat scan --containers --depth 2 movie.iso catalog.db
+offcat scan --depth 2 movie.iso catalog.db
 ```
 
 扫描选项 / Scan options:
 
 | 选项 / Option | 说明 / Description |
 |------|------|
-| `--containers` | 扫描并展开 ISO 容器（默认不展开）/ scan and expand ISO containers (off by default) |
-| `--depth <N>` | 容器嵌套层数（0 = 不展开任何容器；1 = 展开一层容器且其内部目录树完整收录；2+ = 同时展开内嵌容器；默认 1）/ container nesting depth (0 = no containers; 1 = one level with its full inner tree; 2+ = also expand nested containers; default 1) |
+| `--depth <N>` | 容器展开深度（0 = 仅识别容器、不展开，默认；1 = 展开一层容器且其内部目录树完整收录；2+ = 同时展开内嵌容器）/ container expansion depth (0 = discover containers only, no expansion (default); 1 = one level with its full inner tree; 2+ = also expand nested containers) |
 | `--checksum <spec>` | 校验算法：逗号分隔列表（`sha256`/`md5`/`crc32`）、`all`（全部）或 `none`（不计算）；可重复出现并自动去重；裸 `--checksum` = all / algorithms: comma-separated list (`sha256`/`md5`/`crc32`), `all`, or `none`; repeatable and auto-deduped; bare `--checksum` = all |
 | `--progress` / `--no-progress` | 扫描进度输出（实时显示当前扫描路径与已扫文件/目录计数；交互终端每秒刷新同一行，输出重定向时每 5 秒一行；默认开启，`--no-progress` 关闭；`--quiet` 自动关闭）/ live scan progress (current path plus files/dirs counts; interactive terminals redraw one line per second, redirected output appends a line every 5 s; on by default, `--no-progress` disables, `--quiet` also disables) |
 | `--verbose` / `--debug` / `--quiet` | 日志级别 / log level |

@@ -61,11 +61,10 @@ static void print_usage(const char* prog) {
         "  " << prog << " serve [--port <N>] [--web-root <dir>] <catalog.db>  Read-only web viewer (default port 8080)\n"
         "\n"
         "Scan options:\n"
-        "  --containers      Scan and expand ISO containers\n"
-        "  --depth <N>       Container nesting depth (0 = do not expand;\n"
-                "                    1 = expand top-level containers with full\n"
-                "                    contents; 2+ also expands containers nested\n"
-                "                    inside them; default 1)\n"
+        "  --depth <N>       Container expansion depth (0 = discover only,\n"
+        "                    no expansion (default); 1 = expand top-level\n"
+        "                    containers with full contents; 2+ also\n"
+        "                    expands containers nested inside them)\n"
         "  --checksum <spec> Checksums to compute: comma-separated list of\n"
         "                    sha256|md5|crc32, or all/none; repeatable\n"
         "                    (bare --checksum = all; none disables)\n"
@@ -171,8 +170,6 @@ static bool parse_checksum_flags(const std::vector<std::string>& args,
             if (!consumed) {
                 apply_checksum_spec({"all"}, options);
             }
-        } else if (arg == "--containers") {
-            options.scan_containers = true;
         } else if (arg == "--depth") {
             if (idx + 1 >= static_cast<int>(args.size())) {
                 std::cerr << "Error: --depth requires a value\n";
