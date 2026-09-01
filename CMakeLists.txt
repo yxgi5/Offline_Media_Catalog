@@ -86,14 +86,12 @@ endif()
 
 # GoogleTest (tests only)
 if(OFFCAT_BUILD_TESTS)
-    # Prefer a local googletest checkout/extraction when available
-    # (avoids network download); otherwise fall back to the vendored
-    # zip in third_party/ so offline builds stay reproducible.
+    # Prefer a local googletest extraction when available (avoids the
+    # FetchContent extraction step); otherwise the vendored zip in
+    # third_party/ keeps offline builds reproducible.
     if(NOT DEFINED GOOGLETEST_SOURCE_DIR)
         if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/googletest-1.14.0")
             set(GOOGLETEST_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/googletest-1.14.0")
-        elseif(EXISTS "$ENV{USERPROFILE}/Desktop/googletest")
-            set(GOOGLETEST_SOURCE_DIR "$ENV{USERPROFILE}/Desktop/googletest")
         endif()
     endif()
     if(GOOGLETEST_SOURCE_DIR)

@@ -68,13 +68,15 @@ We needed a tool that could reliably scan FUSE-mounted storage, parse ISO images
   and extracted via CMake FetchContent, so building works fully offline; you may
   also extract them into `third_party/` yourself to skip the extraction step.
 
-> 平台状态：Windows（MinGW-w64）已实测通过；Linux / macOS 代码已做平台隔离
-> （平台逻辑集中在 `src/platform/`、无 Win32 依赖），但尚未经 CI 验证。
+> 平台状态：Windows（MinGW-w64）与 Linux（ubuntu-22.04 构建，glibc 2.35+）
+> 均已由 CI 验证；macOS 代码已做平台隔离（平台逻辑集中在 `src/platform/`、
+> 无 Win32 依赖），但尚未经 CI 验证。
 > 详见 [架构文档 - 已知限制](docs/architecture.md)。
 >
-> Platform status: Windows (MinGW-w64) is tested and working; Linux / macOS code
-> is platform-isolated (platform logic lives in `src/platform/`, no Win32
-> dependencies) but not yet verified by CI. See the
+> Platform status: Windows (MinGW-w64) and Linux (ubuntu-22.04 build,
+> glibc 2.35+) are verified by CI; macOS code is platform-isolated
+> (platform logic lives in `src/platform/`, no Win32 dependencies) but
+> not yet verified by CI. See the
 > [architecture doc - known limitations](docs/architecture.md).
 
 ### 步骤 / Steps

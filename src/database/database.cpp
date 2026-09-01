@@ -268,10 +268,6 @@ Result<bool> Database::enable_wal() {
     return execute("PRAGMA journal_mode = WAL;");
 }
 
-Result<bool> Database::set_journal_mode(const std::string& mode) {
-    return execute("PRAGMA journal_mode = " + mode + ";");
-}
-
 // ── Transaction ─────────────────────────────────────────────────────
 
 Transaction::Transaction(Database& db) : db_(db) {

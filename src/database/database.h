@@ -39,7 +39,6 @@ public:
 
     // PRAGMA helpers
     Result<bool> enable_wal();
-    Result<bool> set_journal_mode(const std::string& mode);
 
 private:
     sqlite3* db_ = nullptr;
