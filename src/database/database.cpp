@@ -31,7 +31,10 @@ Result<bool> Database::open(const std::string& path) {
     }
 
     // Enable foreign keys
-    execute("PRAGMA foreign_keys = ON;");
+    auto fk_result = execute("PRAGMA foreign_keys = ON;");
+    if (is_err(fk_result)) {
+        LOG_WARN("Failed to enable foreign keys");
+    }
 
     return true;
 }
@@ -57,7 +60,10 @@ Result<bool> Database::open_readonly(const std::string& path) {
     }
     // WAL databases need the shared-memory file even for readers;
     // query_only guards against accidental writes via raw handles.
-    execute("PRAGMA query_only = ON;");
+    auto qo_result = execute("PRAGMA query_only = ON;");
+    if (is_err(qo_result)) {
+        LOG_WARN("Failed to set query_only mode");
+    }
     return true;
 }
 

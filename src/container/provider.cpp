@@ -75,7 +75,11 @@ Result<int64_t> VirtualTreeWriter::add_entry(const EntryData& entry) {
         }
     }
 
-    entry_mgr_.insert_fts(new_id, entry.name, path, source_name);
+    auto fts_result = entry_mgr_.insert_fts(new_id, entry.name, path,
+                                           source_name);
+    if (is_err(fts_result)) {
+        LOG_WARN("Failed to index virtual entry: " + entry.name);
+    }
     return new_id;
 }
 

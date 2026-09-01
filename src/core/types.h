@@ -4,6 +4,7 @@
 #include <string>
 #include <variant>
 #include <optional>
+#include <utility>
 #include <vector>
 
 namespace offcat {
@@ -15,20 +16,36 @@ struct Error {
     std::string message;
 };
 
+// Result<T> carries either a value or an Error.  The class carries
+// [[nodiscard]] so every dropped error return becomes a compile-time
+// warning instead of silent failure.
 template <typename T>
-using Result = std::variant<T, Error>;
+class [[nodiscard]] Result {
+public:
+    Result(const T& value) : v_(value) {}
+    Result(T&& value) : v_(std::move(value)) {}
+    Result(const Error& error) : v_(error) {}
+    Result(Error&& error) : v_(std::move(error)) {}
+
+    const T& value() const { return std::get<T>(v_); }
+    const Error& error() const { return std::get<Error>(v_); }
+    bool has_value() const { return std::holds_alternative<T>(v_); }
+
+private:
+    std::variant<T, Error> v_;
+};
 
 template <typename T>
-bool is_ok(const Result<T>& r) { return std::holds_alternative<T>(r); }
+bool is_ok(const Result<T>& r) { return r.has_value(); }
 
 template <typename T>
-bool is_err(const Result<T>& r) { return std::holds_alternative<Error>(r); }
+bool is_err(const Result<T>& r) { return !r.has_value(); }
 
 template <typename T>
-const T& get_ok(const Result<T>& r) { return std::get<T>(r); }
+const T& get_ok(const Result<T>& r) { return r.value(); }
 
 template <typename T>
-const Error& get_err(const Result<T>& r) { return std::get<Error>(r); }
+const Error& get_err(const Result<T>& r) { return r.error(); }
 
 inline Result<bool> ok() { return true; }
 inline Result<bool> err(int code, const std::string& msg) {

@@ -257,7 +257,10 @@ static int cmd_scan(const std::vector<std::string>& args) {
     }
 
     // Ensure schema exists
-    db.initialize_schema();
+    if (is_err(db.initialize_schema())) {
+        std::cerr << "Error: failed to initialize schema\n";
+        return 1;
+    }
 
     // Set up Ctrl+C handling
     std::signal(SIGINT, signal_handler);
@@ -307,7 +310,10 @@ static int cmd_search(const std::vector<std::string>& args) {
         std::cerr << "Error: " << get_err(open_result).message << "\n";
         return 1;
     }
-    db.initialize_schema();
+    if (is_err(db.initialize_schema())) {
+        std::cerr << "Error: failed to initialize schema\n";
+        return 1;
+    }
 
     SearchEngine engine(db);
     auto results = engine.search(args[1], 200);
@@ -349,7 +355,10 @@ static int cmd_info(const std::vector<std::string>& args) {
         std::cerr << "Error: " << get_err(open_result).message << "\n";
         return 1;
     }
-    db.initialize_schema();
+    if (is_err(db.initialize_schema())) {
+        std::cerr << "Error: failed to initialize schema\n";
+        return 1;
+    }
 
     SourceManager source_mgr(db);
     EntryManager entry_mgr(db);
