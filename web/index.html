@@ -27,7 +27,7 @@
   .node:hover { background:#eef1f5; }
   .node.selected { background:#dbe7fb; }
   .twist { width:14px; display:inline-block; color:var(--muted); font-size:10px; }
-  .icon { width:16px; text-align:center; }
+  .icon { width:16px; display:inline-block; text-align:center; }
   .f-dir { color:#d08a00; } .f-file { color:#8b949e; } .f-sym { color:#b3478f; }
   .tag { font-size:10px; padding:0 5px; border-radius:8px; margin-left:4px; }
   .tag.v { background:#efe9ff; color:var(--vtag); }
@@ -67,7 +67,7 @@ const srcsel = document.getElementById("srcsel");
 const searchInput = document.getElementById("search");
 const statsEl = document.getElementById("stats");
 let sources = [];
-let loaded = new Set();   // entry ids whose children are loaded
+let loading = new Set();  // ids with an in-flight expansion
 let selected = null;
 
 async function getJSON(url) {
@@ -89,11 +89,19 @@ function iconFor(type, isVirtual) {
   return m[type] || "❔";
 }
 
-function nodeLabel(e) {
-  let s = iconFor(e.type, e.is_virtual) + " " + e.name;
-  if (e.is_virtual) s += '<span class="tag v">virtual</span>';
-  if (e.is_container) s += '<span class="tag c">' + e.container_type + "</span>";
-  return s;
+function typeClass(t) {
+  return t === "directory" ? "f-dir" : t === "symlink" ? "f-sym" : "f-file";
+}
+
+function setTwist(div, ul) {
+  div.querySelector(".twist").textContent = ul.children.length ? "▾" : "";
+}
+
+function toggleNode(div, ul) {
+  const hidden = ul.style.display === "none";
+  ul.style.display = hidden ? "" : "none";
+  div.querySelector(".twist").textContent =
+    ul.children.length ? (hidden ? "▾" : "▸") : "";
 }
 
 function mkNode(e) {
@@ -102,29 +110,29 @@ function mkNode(e) {
   div.className = "node";
   div.innerHTML = '<span class="twist">' + (e.is_dir || e.is_container ? "▸" : "") + "</span>" +
                   '<span class="icon">' + iconFor(e.type, e.is_virtual) + "</span>" +
-                  '<span class="f-' + e.type + '">' + escapeHtml(e.name) + "</span>" +
+                  '<span class="' + typeClass(e.type) + '">' + escapeHtml(e.name) + "</span>" +
                   (e.is_virtual ? '<span class="tag v">virtual</span>' : "") +
                   (e.is_container ? '<span class="tag c">iso</span>' : "");
   div.addEventListener("click", async (ev) => {
     ev.stopPropagation();
     selectNode(div, e);
-    if ((e.is_dir || e.is_container) && !loaded.has(e.id)) {
-      loaded.add(e.id);
-      const ul = document.createElement("ul");
-      ul.className = "tree";
-      li.appendChild(ul);
-      try {
-        const kids = await getJSON("/api/tree?parent_id=" + e.id);
-        for (const k of kids) ul.appendChild(mkNode(k));
-        div.querySelector(".twist").textContent = kids.length ? "▾" : "";
-      } catch (err) { ul.innerHTML = '<li class="err">加载失败</li>'; }
-    } else if (e.is_dir || e.is_container) {
-      const twist = div.querySelector(".twist");
-      const ul = li.querySelector("ul");
-      if (ul) {
-        ul.style.display = ul.style.display === "none" ? "" : "none";
-        twist.textContent = ul.style.display === "none" ? "▸" : "▾";
-      }
+    if (!e.is_dir && !e.is_container) return;
+    const ul = li.querySelector("ul");
+    if (ul) { toggleNode(div, ul); return; }  // 已加载：收起/展开
+    if (loading.has(e.id)) return;            // 加载中：忽略重复点击
+    loading.add(e.id);
+    const newUl = document.createElement("ul");
+    newUl.className = "tree";
+    li.appendChild(newUl);
+    try {
+      const kids = await getJSON("/api/tree?parent_id=" + e.id);
+      for (const k of kids) newUl.appendChild(mkNode(k));
+      setTwist(div, newUl);
+    } catch (err) {
+      newUl.innerHTML = '<li class="err">加载失败</li>';
+      setTwist(div, newUl);
+    } finally {
+      loading.delete(e.id);
     }
   });
   li.appendChild(div);
@@ -207,7 +215,7 @@ async function loadSources() {
     srcsel.innerHTML = '<option value="">全部 Source</option>' +
       srcs.map(s => '<option value="' + s.id + '">' + escapeHtml(s.name) + " (" + s.entries + ")</option>").join("");
     treeEl.innerHTML = "";
-    loaded.clear();
+    loading.clear();
     for (const s of srcs) {
       const li = document.createElement("li");
       const div = document.createElement("div");
@@ -218,13 +226,23 @@ async function loadSources() {
                       '<span class="tag c">' + escapeHtml(s.type) + "</span>";
       div.addEventListener("click", async () => {
         selectNode(div, {id: -s.id});
-        loaded.add(-s.id);
-        const ul = document.createElement("ul");
-        ul.className = "tree";
-        li.appendChild(ul);
-        const kids = await getJSON("/api/tree?parent_id=0&source_id=" + s.id);
-        for (const k of kids) ul.appendChild(mkNode(k));
-        div.querySelector(".twist").textContent = kids.length ? "▾" : "";
+        const ul = li.querySelector("ul");
+        if (ul) { toggleNode(div, ul); return; }  // 已加载：收起/展开
+        if (loading.has(-s.id)) return;           // 加载中：忽略重复点击
+        loading.add(-s.id);
+        const newUl = document.createElement("ul");
+        newUl.className = "tree";
+        li.appendChild(newUl);
+        try {
+          const kids = await getJSON("/api/tree?parent_id=0&source_id=" + s.id);
+          for (const k of kids) newUl.appendChild(mkNode(k));
+          setTwist(div, newUl);
+        } catch (err) {
+          newUl.innerHTML = '<li class="err">加载失败</li>';
+          setTwist(div, newUl);
+        } finally {
+          loading.delete(-s.id);
+        }
       });
       li.appendChild(div);
       treeEl.appendChild(li);
