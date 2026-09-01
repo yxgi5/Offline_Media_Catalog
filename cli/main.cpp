@@ -68,11 +68,13 @@ static void print_usage(const char* prog) {
         "  --checksum <spec> Checksums to compute: comma-separated list of\n"
         "                    sha256|md5|crc32, or all/none; repeatable\n"
         "                    (bare --checksum = all; none disables)\n"
-        "  --progress        Show live scan progress (default on)\n"
-        "  --no-progress     Disable progress output\n"
-        "  --verbose         Verbose output\n"
-        "  --debug           Debug output\n"
-        "  --quiet           Minimal output\n";
+        "  --progress <on|off> Enable/disable live scan progress\n"
+        "                    (default on; bare --progress = on)\n"
+        "  Log levels, increasing detail: Quiet < Normal < Verbose < Debug\n"
+        "                    (default Normal):\n"
+        "  --quiet           Quiet: warnings/errors only; also disables progress\n"
+        "  --verbose         Verbose: + per-directory, container and entry details\n"
+        "  --debug           Debug: + internal diagnostics (checkpoints, parsing)\n";
 }
 
 static void add_algorithm(ScanOptions& options, ChecksumAlgorithm algo) {
@@ -189,9 +191,15 @@ static bool parse_checksum_flags(const std::vector<std::string>& args,
             Logger::instance().set_level(LogLevel::Quiet);
             options.show_progress = false;
         } else if (arg == "--progress") {
-            options.show_progress = true;
-        } else if (arg == "--no-progress") {
-            options.show_progress = false;
+            // --progress [on|off]: consumes the next argument only when
+            // it is exactly "on" or "off"; a bare --progress keeps the
+            // default meaning (on).  Order-overrides rule applies.
+            if (idx + 1 < static_cast<int>(args.size()) &&
+                (args[idx + 1] == "on" || args[idx + 1] == "off")) {
+                options.show_progress = (args[++idx] == "on");
+            } else {
+                options.show_progress = true;
+            }
         } else {
             // Non-flag argument: path
             return true;

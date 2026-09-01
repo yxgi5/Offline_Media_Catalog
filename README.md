@@ -162,8 +162,8 @@ offcat scan --depth 2 movie.iso catalog.db
 |------|------|
 | `--depth <N>` | 容器展开深度（0 = 仅识别容器、不展开，默认；1 = 展开一层容器且其内部目录树完整收录；2+ = 同时展开内嵌容器）/ container expansion depth (0 = discover containers only, no expansion (default); 1 = one level with its full inner tree; 2+ = also expand nested containers) |
 | `--checksum <spec>` | 校验算法：逗号分隔列表（`sha256`/`md5`/`crc32`）、`all`（全部）或 `none`（不计算）；可重复出现并自动去重；裸 `--checksum` = all / algorithms: comma-separated list (`sha256`/`md5`/`crc32`), `all`, or `none`; repeatable and auto-deduped; bare `--checksum` = all |
-| `--progress` / `--no-progress` | 扫描进度输出（实时显示当前扫描路径与已扫文件/目录计数；交互终端每秒刷新同一行，输出重定向时每 5 秒一行；默认开启，`--no-progress` 关闭；`--quiet` 自动关闭）/ live scan progress (current path plus files/dirs counts; interactive terminals redraw one line per second, redirected output appends a line every 5 s; on by default, `--no-progress` disables, `--quiet` also disables) |
-| `--verbose` / `--debug` / `--quiet` | 日志级别 / log level |
+| `--progress <on\|off>` | 扫描进度输出（实时显示当前扫描路径与已扫文件/目录计数；交互终端每秒刷新同一行，输出重定向时每 5 秒一行；默认开启，裸 `--progress` = on，`--progress off` 关闭；`--quiet` 自动关闭）/ live scan progress (current path plus files/dirs counts; interactive terminals redraw one line per second, redirected output appends a line every 5 s; on by default, bare `--progress` = on, `--progress off` disables; `--quiet` also disables) |
+| `--quiet` / `--verbose` / `--debug` | 日志级别，由少到多：Quiet < Normal < Verbose < Debug，默认 Normal。`--quiet`：仅警告/错误（同时关闭进度）；`--verbose`：增加逐目录、容器与条目细节；`--debug`：增加内部诊断（检查点、解析过程）/ log levels, increasing detail: Quiet < Normal < Verbose < Debug, default Normal. `--quiet`: warnings/errors only (also disables progress); `--verbose`: adds per-directory, container and entry details; `--debug`: adds internal diagnostics (checkpoints, parser internals) |
 
 扫描默认记录每个条目的修改时间与创建时间（创建时间在平台无法
 提供时保持为空，如 Linux 无 statx 的情况）。

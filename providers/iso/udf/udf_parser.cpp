@@ -146,12 +146,17 @@ bool UdfParser::parse_anchor() {
         int64_t main_vds_length = static_cast<int64_t>(u32le(data + 16));
         int64_t main_vds_location = static_cast<int64_t>(u32le(data + 20));
 
+        LOG_DEBUG("UDF: AVDP found at sector " + std::to_string(sector));
+
         if (main_vds_length <= 0 || main_vds_location < 0) continue;
 
         // Parse the VDS; the NSR magic is in the LVD "logical volume
         // contents use" field, not necessarily at VDS start
         if (parse_vds(main_vds_location, main_vds_length)) {
             open_ = true;
+            LOG_DEBUG("UDF: volume opened, " +
+                      std::to_string(partition_starts_.size()) +
+                      " partition(s)");
             return true;
         }
     }
@@ -163,6 +168,9 @@ bool UdfParser::parse_vds(int64_t vds_sector, int64_t vds_length) {
     // terminated by TAG_TD
     int64_t count = vds_length / UDF_SECTOR_SIZE;
     if (count <= 0 || count > 512) count = 512;
+
+    LOG_DEBUG("UDF: VDS at sector " + std::to_string(vds_sector) +
+              ", scanning " + std::to_string(count) + " sectors");
 
     int pd_index = 0;
 

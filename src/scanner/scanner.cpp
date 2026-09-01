@@ -332,6 +332,7 @@ Result<int64_t> Scanner::scan_directory(int64_t source_id, int64_t parent_id,
     }
 
     std::error_code ec;
+    LOG_VERBOSE("Scanning directory: " + dir_path.string());
     for (auto it = std::filesystem::directory_iterator(dir_path, ec);
          it != std::filesystem::directory_iterator(); it.increment(ec)) {
 
