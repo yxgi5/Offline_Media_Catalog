@@ -653,6 +653,93 @@ TEST(IsoProviderRrTest, NestedIsoExpandedAtDepthTwo) {
     std::filesystem::remove_all(img_dir);
 }
 
+namespace {
+
+// Scan one synthesized image into a fresh database with the given
+// ContainerOptions; returns the total entries under the source.
+std::vector<EntryData> scan_image_with_options(const std::vector<uint8_t>& image,
+                                               const ContainerOptions& opts,
+                                               const std::string& db_name,
+                                               const std::string& dir_name) {
+    std::string db_path = temp_db_path(db_name);
+    std::filesystem::remove(db_path);
+    std::filesystem::path img_dir =
+        std::filesystem::temp_directory_path() / dir_name;
+    std::filesystem::create_directories(img_dir);
+    write_file(img_dir / "test.iso", image);
+
+    Database db;
+    EXPECT_TRUE(is_ok(db.create(db_path)));
+    SourceManager sm(db);
+    SourceData s;
+    s.name = "IMG";
+    s.type = SourceType::ISO;
+    s.source_path = img_dir.string();
+    auto source_id = sm.insert(s);
+    EXPECT_TRUE(is_ok(source_id));
+
+    EntryManager em(db);
+    EntryData iso_entry;
+    iso_entry.source_id = get_ok(source_id);
+    iso_entry.name = "test.iso";
+    iso_entry.type = EntryType::File;
+    auto iso_id = em.insert(iso_entry);
+    EXPECT_TRUE(is_ok(iso_id));
+
+    IsoProvider provider;
+    EXPECT_TRUE(provider.scan(get_ok(iso_id), db, opts));
+
+    auto all = em.get_by_source(get_ok(source_id));
+    EXPECT_TRUE(is_ok(all));
+    std::vector<EntryData> out = get_ok(all);
+    db.close();
+    cleanup_db(db_path);
+    std::filesystem::remove_all(img_dir);
+    return out;
+}
+
+} // namespace
+
+// Guardrail: max_entries stops the walk at the configured cap.  The
+// full image has 7 virtual entries (depth 2), so 3 must truncate.
+TEST(IsoProviderRrTest, MaxEntriesTruncatesExpansion) {
+    ContainerOptions opts;
+    opts.max_depth = 2;
+    opts.max_entries = 3;
+    auto entries = scan_image_with_options(build_rr_image(), opts,
+                                           "offcat_rr_limits.db",
+                                           "offcat_rr_limits");
+    // test.iso itself + exactly 3 virtual entries (count is checked
+    // before each insert, so the cap is never exceeded).
+    EXPECT_EQ(entries.size(), 4u);
+    int virtual_count = 0;
+    for (const auto& e : entries) {
+        if (e.is_virtual) virtual_count++;
+    }
+    EXPECT_EQ(virtual_count, 3);
+}
+
+// Guardrail: max_virtual_size stops the walk once the accumulated
+// size of virtual entries exceeds the cap.  Directories carry the full
+// 2048-byte sector size, so a 2048 cap allows rr_moved (2048, exactly
+// at the cap) and stops at the second entry (deep-dir, 4096).
+TEST(IsoProviderRrTest, MaxVirtualSizeTruncatesExpansion) {
+    ContainerOptions opts;
+    opts.max_depth = 2;
+    opts.max_virtual_size = 2048;
+    auto entries = scan_image_with_options(build_rr_image(), opts,
+                                           "offcat_rr_sizelimit.db",
+                                           "offcat_rr_sizelimit");
+    // test.iso + 2 virtual entries; the entry that overflowed the cap
+    // is the last one kept.
+    EXPECT_EQ(entries.size(), 3u);
+    int virtual_count = 0;
+    for (const auto& e : entries) {
+        if (e.is_virtual) virtual_count++;
+    }
+    EXPECT_EQ(virtual_count, 2);
+}
+
 // ── Scanner: single-file source expands containers ──────────────────
 
 TEST(IsoProviderRrTest, ScannerExpandsSingleFileSource) {

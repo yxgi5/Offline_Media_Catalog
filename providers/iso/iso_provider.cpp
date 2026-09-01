@@ -8,6 +8,7 @@
 
 #include <cctype>
 #include <algorithm>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -20,6 +21,24 @@ namespace {
 // guards against malicious images whose directory records form a
 // cycle.  Real-world images stay far below this.
 constexpr int kMaxDirDepth = 256;
+
+// Runtime guardrails for one container expansion, derived from
+// ContainerOptions (0 = no limit where applicable).  `hit` stops every
+// remaining call site once any limit fires; `limit_reported` keeps the
+// truncation warning to one line per container.
+struct WalkLimits {
+    int max_entries = 0;
+    int64_t max_virtual_size = 0;
+    int64_t deadline_ms = 0;
+    bool hit = false;
+    bool limit_reported = false;
+};
+
+int64_t now_ms() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
 
 // Rock Ridge relocates deep directories (paths with more than 8 name
 // components) into a relocation directory at the root (rr_moved or
@@ -152,10 +171,35 @@ void walk_iso_directory(const std::vector<IsoEntry>& entries,
                         const RrRelocation& rr,
                         VirtualTreeWriter& writer, int64_t parent_id,
                         int dir_depth, int container_depth, int max_depth,
-                        int& count, const DirReader& reader,
+                        int& count, int64_t& total_size,
+                        WalkLimits& limits, const DirReader& reader,
                         const FileSectorReader& file_reader,
                         const NestedExpander& expander) {
     for (const auto& orig : entries) {
+        // Guardrails: entry count and scan time are checked before
+        // inserting; size is checked after so the overflowing entry is
+        // the last one kept.  Once any limit fires, `hit` makes every
+        // remaining call site return so the whole expansion stops.
+        if (limits.hit) return;
+        if (limits.max_entries > 0 && count >= limits.max_entries) {
+            limits.hit = true;
+            if (!limits.limit_reported) {
+                LOG_WARN("ISO: entry limit (" +
+                         std::to_string(limits.max_entries) +
+                         ") reached, expansion truncated");
+                limits.limit_reported = true;
+            }
+            return;
+        }
+        if (limits.deadline_ms > 0 && now_ms() > limits.deadline_ms) {
+            limits.hit = true;
+            if (!limits.limit_reported) {
+                LOG_WARN("ISO: scan time limit reached, expansion "
+                         "truncated");
+                limits.limit_reported = true;
+            }
+            return;
+        }
         IsoEntry e = orig;
 
         // Deep-directory placeholder: substitute the real entry from
@@ -191,6 +235,18 @@ void walk_iso_directory(const std::vector<IsoEntry>& entries,
             continue;
         }
         count++;
+        total_size += ed.size;
+        if (limits.max_virtual_size > 0 &&
+            total_size > limits.max_virtual_size) {
+            limits.hit = true;
+            if (!limits.limit_reported) {
+                LOG_WARN("ISO: virtual size limit (" +
+                         std::to_string(limits.max_virtual_size) +
+                         ") reached, expansion truncated");
+                limits.limit_reported = true;
+            }
+            return;
+        }
         int64_t entry_id = get_ok(result);
 
         if (e.is_directory) {
@@ -199,8 +255,8 @@ void walk_iso_directory(const std::vector<IsoEntry>& entries,
                 if (reader(e.extent, e.size, children)) {
                     walk_iso_directory(children, rr, writer, entry_id,
                                        dir_depth + 1, container_depth,
-                                       max_depth, count, reader, file_reader,
-                                       expander);
+                                       max_depth, count, total_size, limits,
+                                       reader, file_reader, expander);
                 } else {
                     LOG_WARN("ISO: failed to read directory: " + e.name);
                 }
@@ -234,9 +290,31 @@ void walk_iso_directory(const std::vector<IsoEntry>& entries,
 void walk_udf_directory(const std::vector<UdfEntry>& entries,
                         VirtualTreeWriter& writer, int64_t parent_id,
                         int dir_depth, int container_depth, int max_depth,
-                        int& count, UdfParser& udf,
+                        int& count, int64_t& total_size,
+                        WalkLimits& limits, UdfParser& udf,
                         const NestedExpander& expander) {
     for (const auto& e : entries) {
+        // Same guardrails as walk_iso_directory (see there).
+        if (limits.hit) return;
+        if (limits.max_entries > 0 && count >= limits.max_entries) {
+            limits.hit = true;
+            if (!limits.limit_reported) {
+                LOG_WARN("UDF: entry limit (" +
+                         std::to_string(limits.max_entries) +
+                         ") reached, expansion truncated");
+                limits.limit_reported = true;
+            }
+            return;
+        }
+        if (limits.deadline_ms > 0 && now_ms() > limits.deadline_ms) {
+            limits.hit = true;
+            if (!limits.limit_reported) {
+                LOG_WARN("UDF: scan time limit reached, expansion "
+                         "truncated");
+                limits.limit_reported = true;
+            }
+            return;
+        }
         if (!valid_iso_name(e.name)) {
             LOG_VERBOSE("UDF: skipping entry with invalid name (len=" +
                         std::to_string(e.name.size()) + ")");
@@ -270,6 +348,18 @@ void walk_udf_directory(const std::vector<UdfEntry>& entries,
             continue;
         }
         count++;
+        total_size += ed.size;
+        if (limits.max_virtual_size > 0 &&
+            total_size > limits.max_virtual_size) {
+            limits.hit = true;
+            if (!limits.limit_reported) {
+                LOG_WARN("UDF: virtual size limit (" +
+                         std::to_string(limits.max_virtual_size) +
+                         ") reached, expansion truncated");
+                limits.limit_reported = true;
+            }
+            return;
+        }
         int64_t entry_id = get_ok(result);
 
         if (e.is_directory) {
@@ -282,7 +372,8 @@ void walk_udf_directory(const std::vector<UdfEntry>& entries,
                 if (udf.read_directory(icb, children, dir_depth)) {
                     walk_udf_directory(children, writer, entry_id,
                                        dir_depth + 1, container_depth,
-                                       max_depth, count, udf, expander);
+                                       max_depth, count, total_size, limits,
+                                       udf, expander);
                 } else {
                     LOG_WARN("UDF: failed to read directory: " + e.name);
                 }
@@ -476,8 +567,16 @@ bool IsoProvider::scan_udf(const std::string& filepath, int64_t source_id,
     LOG_VERBOSE("UDF entry count: " + std::to_string(root_entries.size()));
 
     int inserted = 0;
+    int64_t total_size = 0;
     int container_depth = options.current_depth > 0 ? options.current_depth : 1;
     int max_depth = options.max_depth > 0 ? options.max_depth : 1;
+    WalkLimits limits;
+    limits.max_entries = options.max_entries;
+    limits.max_virtual_size = options.max_virtual_size;
+    if (options.max_scan_time_seconds > 0) {
+        limits.deadline_ms = now_ms() +
+            static_cast<int64_t>(options.max_scan_time_seconds) * 1000;
+    }
     NestedExpander expander =
         [this, &db, source_id, &options](const std::string& tmp_path,
                                          int64_t nested_id, int next_depth) {
@@ -485,7 +584,12 @@ bool IsoProvider::scan_udf(const std::string& filepath, int64_t source_id,
                           next_depth);
         };
     walk_udf_directory(root_entries, writer, container_entry_id, 1,
-                       container_depth, max_depth, inserted, udf, expander);
+                       container_depth, max_depth, inserted, total_size,
+                       limits, udf, expander);
+    if (limits.hit) {
+        LOG_WARN("UDF: expansion truncated at " + std::to_string(inserted) +
+                 " entries");
+    }
     LOG_VERBOSE("UDF inserted: " + std::to_string(inserted) + " entries");
     return true;
 }
@@ -514,8 +618,16 @@ bool IsoProvider::scan_iso9660(const std::string& filepath, int64_t source_id,
         };
         RrRelocation no_rr;  // Joliet trees carry no Rock Ridge
         int inserted = 0;
+        int64_t total_size = 0;
         int container_depth = options.current_depth > 0 ? options.current_depth : 1;
         int max_depth = options.max_depth > 0 ? options.max_depth : 1;
+        WalkLimits limits;
+        limits.max_entries = options.max_entries;
+        limits.max_virtual_size = options.max_virtual_size;
+        if (options.max_scan_time_seconds > 0) {
+            limits.deadline_ms = now_ms() +
+                static_cast<int64_t>(options.max_scan_time_seconds) * 1000;
+        }
         NestedExpander expander =
             [this, &db, source_id, &options](const std::string& tmp_path,
                                              int64_t nested_id, int next_depth) {
@@ -523,11 +635,16 @@ bool IsoProvider::scan_iso9660(const std::string& filepath, int64_t source_id,
                               next_depth);
             };
         walk_iso_directory(root_entries, no_rr, writer, container_entry_id, 1,
-                           container_depth, max_depth, inserted, reader,
+                           container_depth, max_depth, inserted, total_size,
+                           limits, reader,
                            [&joliet](int64_t sector, uint8_t* buf, size_t count) {
                                return joliet.read_sector(sector, buf, count);
                            },
                            expander);
+        if (limits.hit) {
+            LOG_WARN("ISO: expansion truncated at " +
+                     std::to_string(inserted) + " entries");
+        }
         LOG_VERBOSE("Joliet inserted: " + std::to_string(inserted) + " entries");
         return true;
     }
@@ -565,8 +682,16 @@ bool IsoProvider::scan_iso9660(const std::string& filepath, int64_t source_id,
         return iso.read_directory(extent, size, out);
     };
     int inserted = 0;
+    int64_t total_size = 0;
     int container_depth = options.current_depth > 0 ? options.current_depth : 1;
     int max_depth = options.max_depth > 0 ? options.max_depth : 1;
+    WalkLimits limits;
+    limits.max_entries = options.max_entries;
+    limits.max_virtual_size = options.max_virtual_size;
+    if (options.max_scan_time_seconds > 0) {
+        limits.deadline_ms = now_ms() +
+            static_cast<int64_t>(options.max_scan_time_seconds) * 1000;
+    }
     NestedExpander expander =
         [this, &db, source_id, &options](const std::string& tmp_path,
                                          int64_t nested_id, int next_depth) {
@@ -574,11 +699,16 @@ bool IsoProvider::scan_iso9660(const std::string& filepath, int64_t source_id,
                           next_depth);
         };
     walk_iso_directory(root_entries, rr, writer, container_entry_id, 1,
-                       container_depth, max_depth, inserted, reader,
+                       container_depth, max_depth, inserted, total_size,
+                       limits, reader,
                        [&iso](int64_t sector, uint8_t* buf, size_t count) {
                            return iso.read_sector(sector, buf, count);
                        },
                        expander);
+    if (limits.hit) {
+        LOG_WARN("ISO: expansion truncated at " + std::to_string(inserted) +
+                 " entries");
+    }
     LOG_VERBOSE("ISO9660 inserted: " + std::to_string(inserted) + " entries");
     return true;
 }

@@ -153,9 +153,12 @@ struct ScanOptions {
 struct ContainerOptions {
     int max_depth = 1;
     int current_depth = 0;
-    int max_entries = 1000000;
-    int64_t max_virtual_size = 0;
-    int max_scan_time_seconds = 0;
+    // Guardrails for one container expansion; each limit stops the
+    // walk (a warning is logged, inserted entries are kept).
+    // 0 disables the limit for max_virtual_size / max_scan_time_seconds.
+    int max_entries = 1000000;       // cap on virtual entries inserted
+    int64_t max_virtual_size = 0;    // cap on accumulated entry size (0 = off)
+    int max_scan_time_seconds = 0;   // wall-clock cap per container (0 = off)
 };
 
 } // namespace offcat
