@@ -9,6 +9,7 @@
 #include <fstream>
 #include <chrono>
 #include <string>
+#include <thread>
 
 using namespace offcat;
 
@@ -371,6 +372,136 @@ TEST(ScannerTest, CancelledRescanPreservesOldData) {
     auto entries = EntryManager(db).get_by_source(old_id);
     ASSERT_TRUE(is_ok(entries));
     ASSERT_EQ(get_ok(entries).size(), 2);  // all previous entries intact
+
+    db.close();
+    std::filesystem::remove_all(dir);
+    std::filesystem::remove(db_path);
+    std::filesystem::remove(db_path + "-wal");
+    std::filesystem::remove(db_path + "-shm");
+}
+
+TEST(ScannerTest, CancelledRescanAfterCommittedBatches) {
+    std::string dir = create_temp_dir();
+    std::string db_path = temp_db_path("offcat_cancel_partial_test.db");
+    std::filesystem::remove(db_path);
+
+    create_test_file(dir + "/keep.txt", "keep");
+
+    Database db;
+    ASSERT_TRUE(is_ok(db.create(db_path)));
+
+    CancellationManager cancel;
+    Scanner scanner(db, cancel);
+    ScanOptions options;
+
+    // Baseline scan
+    ASSERT_TRUE(is_ok(scanner.scan_source(dir, options)));
+
+    SourceManager sm(db);
+    auto sources = sm.get_all();
+    ASSERT_TRUE(is_ok(sources));
+    ASSERT_EQ(get_ok(sources).size(), 1);
+    int64_t old_id = get_ok(sources)[0].id;
+    auto old_entries = EntryManager(db).get_by_source(old_id);
+    ASSERT_TRUE(is_ok(old_entries));
+    size_t old_count = get_ok(old_entries).size();
+
+    // Enough files that the rescan crosses at least one batch checkpoint
+    // (BATCH_SIZE = 1000) before it can be cancelled.
+    for (int i = 0; i < 2500; i++) {
+        create_test_file(dir + "/f" + std::to_string(i) + ".txt", "x");
+    }
+
+    // Run the rescan on a worker thread; cancel it once at least one
+    // batch has been committed.  A second connection observes committed
+    // batches because WAL-mode readers see committed data.
+    std::thread worker([&]() {
+        // Cancellation is asserted through the database state after
+        // join, not through the worker's return value.
+        (void)scanner.scan_source(dir, options);
+    });
+
+    Database observer;
+    ASSERT_TRUE(is_ok(observer.open(db_path)));
+    int64_t committed = 0;
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+    while (committed < static_cast<int64_t>(old_count) + 1000 &&
+           std::chrono::steady_clock::now() < deadline) {
+        auto count = EntryManager(observer).count();
+        if (is_ok(count)) committed = get_ok(count);
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    EXPECT_GE(committed, static_cast<int64_t>(old_count) + 1000)
+        << "rescan never reached a batch checkpoint";
+    cancel.request_cancel();
+    worker.join();
+    observer.close();
+
+    // The shadow tree (committed batches included) must be gone and the
+    // old tree must be exactly as it was.
+    auto sources2 = sm.get_all();
+    ASSERT_TRUE(is_ok(sources2));
+    ASSERT_EQ(get_ok(sources2).size(), 1);
+    EXPECT_EQ(get_ok(sources2)[0].id, old_id);
+
+    auto entries2 = EntryManager(db).get_by_source(old_id);
+    ASSERT_TRUE(is_ok(entries2));
+    ASSERT_EQ(get_ok(entries2).size(), old_count);
+
+    db.close();
+    std::filesystem::remove_all(dir);
+    std::filesystem::remove(db_path);
+    std::filesystem::remove(db_path + "-wal");
+    std::filesystem::remove(db_path + "-shm");
+}
+
+TEST(ScannerTest, OrphanedScanRecoveredAtNextScan) {
+    std::string dir = create_temp_dir();
+    std::string db_path = temp_db_path("offcat_orphan_test.db");
+    std::filesystem::remove(db_path);
+    create_test_file(dir + "/a.txt", "a");
+
+    Database db;
+    ASSERT_TRUE(is_ok(db.create(db_path)));
+
+    // Simulate a crash leftover: a source whose scan row is still
+    // InProgress (a batched scan killed between checkpoints).
+    SourceManager sm(db);
+    SourceData source;
+    source.name = "orphan";
+    source.type = SourceType::Directory;
+    source.source_path = dir;
+    auto src_result = sm.insert(source);
+    ASSERT_TRUE(is_ok(src_result));
+    ScanData scan;
+    scan.source_id = get_ok(src_result);
+    scan.status = ScanStatus::InProgress;
+    auto scan_result = ScanManager(db).insert(scan);
+    ASSERT_TRUE(is_ok(scan_result));
+
+    // The next scan must clean the orphan and proceed normally.
+    CancellationManager cancel;
+    Scanner scanner(db, cancel);
+    ScanOptions options;
+    auto result = scanner.scan_source(dir, options);
+    ASSERT_TRUE(is_ok(result)) << get_err(result).message;
+
+    auto sources = sm.get_all();
+    ASSERT_TRUE(is_ok(sources));
+    ASSERT_EQ(get_ok(sources).size(), 1);  // orphan removed
+    // The fresh scan row is Completed; had the orphan survived there
+    // would be two scan rows for this source (InProgress + Completed).
+    // (SQLite may reuse the orphan's rowid, so the ids are not compared.)
+    int64_t new_id = get_ok(sources)[0].id;
+    auto scans = ScanManager(db).get_by_source(new_id);
+    ASSERT_TRUE(is_ok(scans));
+    ASSERT_EQ(get_ok(scans).size(), 1);
+    EXPECT_EQ(get_ok(scans)[0].status, ScanStatus::Completed);
+
+    auto entries = EntryManager(db).get_by_source(new_id);
+    ASSERT_TRUE(is_ok(entries));
+    ASSERT_EQ(get_ok(entries).size(), 1);
+    EXPECT_EQ(get_ok(entries)[0].name, "a.txt");
 
     db.close();
     std::filesystem::remove_all(dir);

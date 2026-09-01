@@ -24,6 +24,13 @@
 
 namespace offcat {
 
+namespace {
+// Content probing opens and reads each candidate file, so only files at
+// least this large are checked for renamed images; real disc images are
+// far bigger than 1 MiB.
+constexpr int64_t kProbeMinSize = 1 << 20;
+}
+
 Scanner::Scanner(Database& db, CancellationManager& cancel)
     : db_(db), cancel_(cancel),
       source_mgr_(db), entry_mgr_(db),
@@ -126,6 +133,14 @@ SourceType Scanner::detect_source_type(const std::string& path) {
         if (ext == ".iso" || ext == ".img") {
             return SourceType::ISO;
         }
+        // Content probe fallback: renamed or extension-less images are
+        // still recognized as ISO sources (see expand_container_if_needed).
+        std::error_code size_ec;
+        auto size = std::filesystem::file_size(path, size_ec);
+        if (!size_ec && size >= kProbeMinSize &&
+            ProviderRegistry::instance().probe_file(path)) {
+            return SourceType::ISO;
+        }
         return SourceType::File;
     }
     return SourceType::Other;
@@ -168,6 +183,17 @@ Result<int64_t> Scanner::scan_source(const std::string& path,
     }
 
     LOG_INFO("Scanning source: " + source_name + " (" + path + ")");
+
+    // Remove sources left behind by scans that died mid-flight.  The
+    // batched transaction design trades crash atomicity for a bounded
+    // WAL (see recover_orphaned_scans): a killed scan can leave a shadow
+    // tree plus its InProgress scan row behind, which would otherwise
+    // confuse the find_by_path lookup below (no ORDER BY).
+    auto recover_result = recover_orphaned_scans();
+    if (is_err(recover_result)) {
+        LOG_WARN("Orphan cleanup failed: " +
+                 get_err(recover_result).message);
+    }
 
     // Progress reporting setup (throttled path/stat output; see
     // report_progress / report_hashing)
@@ -267,12 +293,12 @@ Result<int64_t> Scanner::scan_source(const std::string& path,
         if (is_err(dir_result)) {
             auto& err = get_err(dir_result);
             // Drop the uncommitted tail of the current batch.
-            db_.execute("ROLLBACK;");
+            (void)db_.execute("ROLLBACK;");  // best effort; drop_shadow below is the real cleanup
             if (err.code == 0) {
                 if (replaced) {
                     // Cancelled replacement scan: drop the shadow tree
                     // so the previous catalog data is preserved.
-                    drop_shadow(source_id);
+                    (void)drop_shadow(source_id);  // drop_shadow logs its own failures
                     clear_progress();
                     LOG_INFO("Scan cancelled, previous data preserved");
                     return Error{0, "Scan cancelled"};
@@ -281,12 +307,16 @@ Result<int64_t> Scanner::scan_source(const std::string& path,
                 // partial data under the new source.
                 clear_progress();
                 LOG_INFO("Scan cancelled by user");
-                scan_mgr_.finish(scan_id, ScanStatus::Cancelled);
+                auto fin_result = scan_mgr_.finish(scan_id, ScanStatus::Cancelled);
+                if (is_err(fin_result)) {
+                    LOG_WARN("Failed to mark scan cancelled: " +
+                             get_err(fin_result).message);
+                }
                 return source_id;
             }
             // Failure: drop the shadow tree, the previous data (if any)
             // was never touched.
-            drop_shadow(source_id);
+            (void)drop_shadow(source_id);  // drop_shadow logs its own failures
             return dir_result;
         }
     } else if (std::filesystem::is_regular_file(path, ec)) {
@@ -294,13 +324,13 @@ Result<int64_t> Scanner::scan_source(const std::string& path,
         auto file_result = scan_file_entry(source_id, 0,
             std::filesystem::path(path), options);
         if (is_err(file_result)) {
-            db_.execute("ROLLBACK;");
-            drop_shadow(source_id);
+            (void)db_.execute("ROLLBACK;");  // best effort
+            (void)drop_shadow(source_id);  // drop_shadow logs its own failures
             return file_result;
         }
     } else {
-        db_.execute("ROLLBACK;");
-        drop_shadow(source_id);
+        (void)db_.execute("ROLLBACK;");  // best effort
+        (void)drop_shadow(source_id);  // drop_shadow logs its own failures
         return Error{1, "Path is not a directory or regular file: " + path};
     }
 
@@ -325,7 +355,11 @@ Result<int64_t> Scanner::scan_source(const std::string& path,
         if (switch_error.empty()) {
             ScanStatus final_status = cancel_.is_cancelled()
                 ? ScanStatus::Cancelled : ScanStatus::Completed;
-            scan_mgr_.finish(scan_id, final_status);
+            auto fin_result = scan_mgr_.finish(scan_id, final_status);
+            if (is_err(fin_result)) {
+                LOG_WARN("Failed to close scan record: " +
+                         get_err(fin_result).message);
+            }
             auto switch_result = txn.commit();
             if (is_err(switch_result)) {
                 switch_error = "Switch commit failed: " +
@@ -337,7 +371,7 @@ Result<int64_t> Scanner::scan_source(const std::string& path,
         // The switch rolled back, so the previous tree is still in place;
         // drop the committed shadow tree instead of leaving two trees in
         // the catalog.
-        drop_shadow(source_id);
+        (void)drop_shadow(source_id);  // drop_shadow logs its own failures
         return Error{1, switch_error};
     }
 
@@ -373,6 +407,40 @@ Result<bool> Scanner::drop_shadow(int64_t source_id) {
         return rm;
     }
     return txn.commit();
+}
+
+Result<bool> Scanner::recover_orphaned_scans() {
+    // Any scan row still InProgress when a new scan starts belongs to a
+    // dead process (the CLI runs one scan at a time and always finishes
+    // its records), so its source tree is a crash leftover: drop it.
+    Statement stmt(db_, "SELECT source_id FROM scan WHERE status = ?");
+    if (!stmt.is_valid()) {
+        return Error{1, "Failed to prepare orphan scan lookup"};
+    }
+    stmt.bind_int(1, static_cast<int>(ScanStatus::InProgress));
+    int64_t orphaned = 0;
+    while (stmt.step()) {
+        int64_t source_id = stmt.column_int64(0);
+        Transaction txn(db_);
+        auto rm = source_mgr_.remove_tree(source_id);
+        if (is_err(rm)) {
+            LOG_WARN("Failed to remove orphaned source data: " +
+                     get_err(rm).message);
+            continue;
+        }
+        auto commit_result = txn.commit();
+        if (is_err(commit_result)) {
+            LOG_WARN("Failed to commit orphan cleanup: " +
+                     get_err(commit_result).message);
+            continue;
+        }
+        orphaned++;
+    }
+    if (orphaned > 0) {
+        LOG_INFO("Removed " + std::to_string(orphaned) +
+                 " orphaned source(s) from interrupted scans");
+    }
+    return true;
 }
 
 Result<int64_t> Scanner::scan_directory(int64_t source_id, int64_t parent_id,
@@ -483,7 +551,11 @@ Result<int64_t> Scanner::scan_directory(int64_t source_id, int64_t parent_id,
         auto source_result = source_mgr_.get_by_id(source_id);
         std::string source_name = is_ok(source_result) ?
             get_ok(source_result).name : "";
-        entry_mgr_.insert_fts(entry_id, name, entry_path, source_name);
+        auto fts_result = entry_mgr_.insert_fts(entry_id, name, entry_path,
+                                               source_name);
+        if (is_err(fts_result)) {
+            LOG_WARN("Failed to index entry: " + name);
+        }
 
         batch_counter_++;
 
@@ -579,7 +651,10 @@ Result<int64_t> Scanner::scan_file_entry(int64_t source_id, int64_t parent_id,
 
     // Compute checksums if requested
     if (options.compute_checksum && !options.checksum_algorithms.empty()) {
-        compute_checksums(entry_id, file_path, options);
+        auto cs_result = compute_checksums(entry_id, file_path, options);
+        if (is_err(cs_result)) {
+            LOG_WARN("Checksum failed for " + file_path.string());
+        }
     }
 
     // Container discovery and expansion
@@ -601,7 +676,23 @@ void Scanner::expand_container_if_needed(
                    [](unsigned char c) {
                        return static_cast<char>(std::tolower(c));
                    });
-    if (ext != ".iso" && ext != ".img") return;
+    bool ext_match = (ext == ".iso" || ext == ".img");
+
+    std::shared_ptr<ContainerProvider> provider;
+    if (ext_match) {
+        provider = ProviderRegistry::instance().find_provider("iso");
+    } else {
+        // Content probe fallback for renamed or extension-less images
+        // (.bin, .nrg, ...).  Only probe files large enough to be a real
+        // disc image, so ordinary files do not pay an extra open+read.
+        std::error_code ec;
+        auto size = std::filesystem::file_size(file_path, ec);
+        if (!ec && size >= kProbeMinSize) {
+            provider = ProviderRegistry::instance()
+                           .probe_file(file_path.string());
+        }
+    }
+    if (!provider) return;
 
     std::string name = file_path.filename().string();
     ContainerData container;
@@ -616,9 +707,8 @@ void Scanner::expand_container_if_needed(
 
     LOG_VERBOSE("Discovered container: " + name + " (type=iso)");
 
-    // Expansion: use the registered provider if available
-    auto provider = ProviderRegistry::instance().find_provider("iso");
-    if (provider && options.max_container_depth >= 1) {
+    // Expansion: use the already-resolved provider
+    if (options.max_container_depth >= 1) {
         ContainerOptions copt;
         copt.max_depth = options.max_container_depth;
         copt.current_depth = 1;

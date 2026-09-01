@@ -125,16 +125,20 @@ If that happens, the criteria and protocol skeleton recorded here (NDJSON entry 
 
 ```
 scan_source(path, options)
-  → 创建 Source 记录
+  → 清理崩溃残留（recover_orphaned_scans：删除 scan 状态仍为 InProgress 的树）
+  → 创建 Source 记录（替换重扫时：新数据写入新的“影子” source id，旧树不动）
   → 创建 Scan 记录
   → 路径是目录：递归遍历（std::filesystem）
-      → 每个 Entry 读取元数据并批量插入（每 1000 条 checkpoint）
+      → 每个 Entry 读取元数据并批量插入（每 1000 条 COMMIT + BEGIN，WAL 有界）
       → 同步更新 FTS5 索引
       → ISO 文件总是注册 Container 记录；--depth >= 1 时 Provider 展开
       → 启用 checksum 时：流式计算 SHA-256/MD5/CRC32
   → 路径是单个文件（.iso/.img）：同样注册 Container 并展开
-  → 提交事务
-  → Scan 状态标记 completed / cancelled
+  → 提交剩余批次
+  → 原子切换：一个小事务内删除旧树 + 关闭 Scan 记录（completed / cancelled）
+  → FTS optimize + VACUUM
+
+失败 / 取消（替换重扫）时：drop_shadow 删除影子树，旧数据从未被触碰。
 ```
 
 容器发现与展开共用同一路径：目录中遇到的 ISO 文件与直接扫描的
@@ -145,6 +149,24 @@ Container discovery and expansion share one path: ISO files found in
 directories and single-file sources scanned directly both go through
 `expand_container_if_needed` → ProviderRegistry → the ISO provider (see
 [Provider API](provider-api.md)).
+
+### 分批事务的取舍 / Batched-Transaction Trade-off
+
+分批提交（每 1000 条 checkpoint）换来了有界的 WAL，代价是**失去崩溃原子性**：
+进程在批次之间被杀死（SIGKILL / 断电）会留下影子树 + InProgress 的
+Scan 记录，旧树不受影响。恢复路径：下一次扫描开始时
+`recover_orphaned_scans` 删除所有 InProgress 的残留树（CLI 单扫描模型下
+InProgress 必然属于已死进程）。这与旧设计的取舍不同：旧设计单事务保证
+崩溃即回滚，但 WAL 会膨胀到整个扫描的大小。
+
+Batched commits (checkpoint every 1000 entries) buy a bounded WAL at the
+cost of crash atomicity: a process killed between batches (SIGKILL, power
+loss) leaves a shadow tree plus an InProgress scan row, while the old
+tree stays untouched. Recovery: at the start of the next scan
+`recover_orphaned_scans` drops every tree whose scan row is still
+InProgress (under the CLI's single-scan model such a row can only belong
+to a dead process). The previous single-transaction design rolled back
+atomically on crash but grew the WAL to the size of the whole scan.
 
 ## Windows 非 ASCII 命令行参数 / Non-ASCII Command-Line Arguments on Windows
 

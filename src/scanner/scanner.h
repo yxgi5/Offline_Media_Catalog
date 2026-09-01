@@ -80,6 +80,12 @@ private:
     // scans so the previous catalog data stays untouched.
     Result<bool> drop_shadow(int64_t source_id);
 
+    // Remove sources left behind by scans that died mid-flight (crash,
+    // SIGKILL, power loss).  The batched transaction design trades crash
+    // atomicity for a bounded WAL; this recovery runs at the start of
+    // each scan and deletes any tree whose scan row is still InProgress.
+    Result<bool> recover_orphaned_scans();
+
     // Discover and expand ISO containers (shared by directory and single-file scans)
     void expand_container_if_needed(int64_t entry_id,
                                     const std::filesystem::path& file_path,
