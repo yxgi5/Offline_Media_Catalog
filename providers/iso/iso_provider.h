@@ -43,9 +43,6 @@ private:
     void expand_nested(const std::string& filepath, int64_t container_entry_id,
                        int64_t source_id, Database& db,
                        const ContainerOptions& options, int next_depth);
-
-    // Check extension for probe hint
-    static bool has_iso_extension(const std::string& filepath);
 };
 
 // Register ISO provider with the global registry

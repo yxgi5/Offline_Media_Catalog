@@ -403,24 +403,12 @@ void walk_udf_directory(const std::vector<UdfEntry>& entries,
 
 } // namespace
 
-// ── Extension check ─────────────────────────────────────────────────
-
-bool IsoProvider::has_iso_extension(const std::string& filepath) {
-    auto dot = filepath.find_last_of('.');
-    if (dot == std::string::npos) return false;
-    std::string ext = filepath.substr(dot + 1);
-    std::transform(ext.begin(), ext.end(), ext.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    return ext == "iso" || ext == "img" || ext == "udf";
-}
-
 // ── Probe ───────────────────────────────────────────────────────────
 
 bool IsoProvider::probe(const std::string& filepath) {
-    // Quick extension check first
-    if (!has_iso_extension(filepath)) return false;
-
-    // Check ISO9660 magic at sector 16
+    // Content-based probe: this is the fallback path for images with
+    // non-ISO extensions (renamed .bin, .nrg, extension-less), so there
+    // is deliberately no extension gate here.
     {
         UdfParser udf(filepath);
         if (udf.open()) return true;
