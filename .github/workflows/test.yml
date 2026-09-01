@@ -1,0 +1,42 @@
+# Run the full test suite on Linux after every push.
+#
+# Separate from release.yml: release builds keep tests disabled to make
+# the publish path minimal, but every change to core logic must be
+# verified by ctest here.  Dependencies are the vendored zips in
+# third_party/, so the job needs no network beyond the checkout itself.
+# The scanner/viewer tests are host-independent logic tests; the Windows
+# cross-build in release.yml only proves compilation, so Linux is the
+# only place tests actually run.
+
+name: Tests
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+  test-linux:
+    name: Build and run tests
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Fetch tags too: the version string comes from git describe
+          # at configure time (same as release.yml).
+          fetch-depth: 0
+
+      - name: Install Ninja
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - name: Configure
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DOFFCAT_BUILD_TESTS=ON
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
