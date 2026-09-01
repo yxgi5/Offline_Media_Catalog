@@ -277,6 +277,108 @@ TEST(ScannerTest, RescanReplacesEntries) {
     std::filesystem::remove(db_path + "-shm");
 }
 
+TEST(ScannerTest, BatchedScanLargeTree) {
+    std::string dir = create_temp_dir();
+    std::string db_path = temp_db_path("offcat_batch_test.db");
+    std::filesystem::remove(db_path);
+
+    // 2500 files: crosses two batch checkpoints (1000, 2000) plus tail
+    for (int i = 0; i < 2500; i++) {
+        create_test_file(dir + "/f" + std::to_string(i) + ".txt", "x");
+    }
+
+    Database db;
+    ASSERT_TRUE(is_ok(db.create(db_path)));
+
+    CancellationManager cancel;
+    Scanner scanner(db, cancel);
+    ScanOptions options;
+
+    // First scan: batched commits must not lose or duplicate entries
+    ASSERT_TRUE(is_ok(scanner.scan_source(dir, options)));
+    EXPECT_EQ(scanner.files_scanned(), 2500);
+
+    SourceManager sm(db);
+    EntryManager em(db);
+    auto sources = sm.get_all();
+    ASSERT_TRUE(is_ok(sources));
+    ASSERT_EQ(get_ok(sources).size(), 1);
+    auto entries = em.get_by_source(get_ok(sources)[0].id);
+    ASSERT_TRUE(is_ok(entries));
+    ASSERT_EQ(get_ok(entries).size(), 2500);
+
+    // FTS search still works across batch boundaries
+    SearchEngine engine(db);
+    auto results = engine.search("f2499");
+    ASSERT_TRUE(is_ok(results));
+    ASSERT_GE(get_ok(results).size(), 1);
+    EXPECT_EQ(get_ok(results)[0].entry_name, "f2499.txt");
+
+    // Rescan: 2500 rows removed inside the switch transaction, then
+    // re-inserted; the catalog must still hold exactly one source
+    ASSERT_TRUE(is_ok(scanner.scan_source(dir, options)));
+    auto sources2 = sm.get_all();
+    ASSERT_TRUE(is_ok(sources2));
+    ASSERT_EQ(get_ok(sources2).size(), 1);
+    auto entries2 = em.get_by_source(get_ok(sources2)[0].id);
+    ASSERT_TRUE(is_ok(entries2));
+    ASSERT_EQ(get_ok(entries2).size(), 2500);
+
+    db.close();
+    std::filesystem::remove_all(dir);
+    std::filesystem::remove(db_path);
+    std::filesystem::remove(db_path + "-wal");
+    std::filesystem::remove(db_path + "-shm");
+}
+
+TEST(ScannerTest, CancelledRescanPreservesOldData) {
+    std::string dir = create_temp_dir();
+    std::string db_path = temp_db_path("offcat_cancel_rescan_test.db");
+    std::filesystem::remove(db_path);
+
+    create_test_file(dir + "/keep.txt", "keep");
+    create_test_file(dir + "/old.txt", "old");
+
+    Database db;
+    ASSERT_TRUE(is_ok(db.create(db_path)));
+
+    CancellationManager cancel;
+    Scanner scanner(db, cancel);
+    ScanOptions options;
+
+    // Baseline scan
+    ASSERT_TRUE(is_ok(scanner.scan_source(dir, options)));
+
+    SourceManager sm(db);
+    auto sources = sm.get_all();
+    ASSERT_TRUE(is_ok(sources));
+    ASSERT_EQ(get_ok(sources).size(), 1);
+    int64_t old_id = get_ok(sources)[0].id;
+
+    // Cancel before the rescan: the scan stops before any entry is
+    // committed, the shadow source is dropped and the previous data
+    // stays untouched.
+    cancel.request_cancel();
+    auto result = scanner.scan_source(dir, options);
+    ASSERT_TRUE(is_err(result));
+    EXPECT_EQ(get_err(result).code, 0);  // cancellation, not failure
+
+    auto sources2 = sm.get_all();
+    ASSERT_TRUE(is_ok(sources2));
+    ASSERT_EQ(get_ok(sources2).size(), 1);  // shadow source dropped
+    EXPECT_EQ(get_ok(sources2)[0].id, old_id);  // same source id
+
+    auto entries = EntryManager(db).get_by_source(old_id);
+    ASSERT_TRUE(is_ok(entries));
+    ASSERT_EQ(get_ok(entries).size(), 2);  // all previous entries intact
+
+    db.close();
+    std::filesystem::remove_all(dir);
+    std::filesystem::remove(db_path);
+    std::filesystem::remove(db_path + "-wal");
+    std::filesystem::remove(db_path + "-shm");
+}
+
 // ── Search ──────────────────────────────────────────────────────────
 
 TEST(SearchTest, FtsNameAndPath) {

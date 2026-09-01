@@ -117,7 +117,12 @@ SourceType Scanner::detect_source_type(const std::string& path) {
     if (std::filesystem::is_regular_file(status)) {
         // Check if it's an ISO file
         std::string ext = std::filesystem::path(path).extension().string();
-        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+        // ::tolower on a bare char is UB for non-ASCII bytes; fold via
+        // unsigned char first.
+        std::transform(ext.begin(), ext.end(), ext.begin(),
+                       [](unsigned char c) {
+                           return static_cast<char>(std::tolower(c));
+                       });
         if (ext == ".iso" || ext == ".img") {
             return SourceType::ISO;
         }
@@ -171,25 +176,20 @@ Result<int64_t> Scanner::scan_source(const std::string& path,
     last_progress_ = scan_start_;
     detect_tty();
 
-    // Begin the transaction early so the replacement removal, the
-    // source/scan records and every entry commit atomically.  On failure
-    // or on cancellation of a replacement scan everything rolls back and
-    // the previous catalog data stays intact.
-    Transaction txn(db_);
-
     // Replacement semantics: a previous scan of the same path is removed
-    // instead of accumulating duplicate sources/entries.
+    // instead of accumulating duplicate sources/entries.  The new data is
+    // written under a fresh shadow source id in batched transactions so
+    // the WAL can be checkpointed during large scans; on success the old
+    // tree is dropped in one small atomic transaction, on failure the
+    // shadow tree is dropped instead and the previous data stays intact.
     bool replaced = false;
+    int64_t old_source_id = 0;
     auto old_result = source_mgr_.find_by_path(path);
     if (is_err(old_result)) {
         return Error{1, "Failed to look up existing source"};
     }
     if (get_ok(old_result) > 0) {
-        auto rm_result = source_mgr_.remove_tree(get_ok(old_result));
-        if (is_err(rm_result)) {
-            return Error{1, "Failed to remove previous source data: " +
-                            get_err(rm_result).message};
-        }
+        old_source_id = get_ok(old_result);
         replaced = true;
         LOG_INFO("Replacing previous scan data for: " + source_name);
     }
@@ -253,6 +253,12 @@ Result<int64_t> Scanner::scan_source(const std::string& path,
     }
     int64_t scan_id = get_ok(scan_result);
 
+    // Scan phase: one transaction, committed in batches by
+    // scan_directory so the WAL stays bounded (see Batch commit there).
+    if (is_err(db_.execute("BEGIN;"))) {
+        return Error{1, "Failed to begin scan transaction"};
+    }
+
     std::error_code ec;
     if (std::filesystem::is_directory(path, ec)) {
         // Scan directory tree
@@ -260,40 +266,79 @@ Result<int64_t> Scanner::scan_source(const std::string& path,
             std::filesystem::path(path), options);
         if (is_err(dir_result)) {
             auto& err = get_err(dir_result);
+            // Drop the uncommitted tail of the current batch.
+            db_.execute("ROLLBACK;");
             if (err.code == 0) {
                 if (replaced) {
-                    // A replacement scan was cancelled: roll back so the
-                    // previous catalog data is preserved.
-                    txn.rollback();
+                    // Cancelled replacement scan: drop the shadow tree
+                    // so the previous catalog data is preserved.
+                    drop_shadow(source_id);
                     clear_progress();
                     LOG_INFO("Scan cancelled, previous data preserved");
                     return Error{0, "Scan cancelled"};
                 }
-                // Cancellation: stop gracefully, keep partial data
+                // Cancellation: stop gracefully, keep the committed
+                // partial data under the new source.
                 clear_progress();
                 LOG_INFO("Scan cancelled by user");
-            } else {
-                scan_mgr_.finish(scan_id, ScanStatus::Failed);
-                return dir_result;
+                scan_mgr_.finish(scan_id, ScanStatus::Cancelled);
+                return source_id;
             }
+            // Failure: drop the shadow tree, the previous data (if any)
+            // was never touched.
+            drop_shadow(source_id);
+            return dir_result;
         }
     } else if (std::filesystem::is_regular_file(path, ec)) {
         // Single file scan
         auto file_result = scan_file_entry(source_id, 0,
             std::filesystem::path(path), options);
         if (is_err(file_result)) {
-            scan_mgr_.finish(scan_id, ScanStatus::Failed);
+            db_.execute("ROLLBACK;");
+            drop_shadow(source_id);
             return file_result;
         }
     } else {
-        scan_mgr_.finish(scan_id, ScanStatus::Failed);
+        db_.execute("ROLLBACK;");
+        drop_shadow(source_id);
         return Error{1, "Path is not a directory or regular file: " + path};
     }
 
-    // Commit remaining entries
-    auto commit_result = txn.commit();
+    // Commit the remaining entries
+    auto commit_result = db_.execute("COMMIT;");
     if (is_err(commit_result)) {
         LOG_WARN("Transaction commit issue, attempting to preserve data");
+    }
+
+    // Atomic switch: drop the old tree and close the scan record in one
+    // small transaction, so the switch itself never bloats the WAL.
+    std::string switch_error;
+    {
+        Transaction txn(db_);
+        if (replaced) {
+            auto rm_result = source_mgr_.remove_tree(old_source_id);
+            if (is_err(rm_result)) {
+                switch_error = "Failed to remove previous source data: " +
+                               get_err(rm_result).message;
+            }
+        }
+        if (switch_error.empty()) {
+            ScanStatus final_status = cancel_.is_cancelled()
+                ? ScanStatus::Cancelled : ScanStatus::Completed;
+            scan_mgr_.finish(scan_id, final_status);
+            auto switch_result = txn.commit();
+            if (is_err(switch_result)) {
+                switch_error = "Switch commit failed: " +
+                               get_err(switch_result).message;
+            }
+        }
+    }
+    if (!switch_error.empty()) {
+        // The switch rolled back, so the previous tree is still in place;
+        // drop the committed shadow tree instead of leaving two trees in
+        // the catalog.
+        drop_shadow(source_id);
+        return Error{1, switch_error};
     }
 
     // Merge FTS segments so tombstones left by replaced scans do not
@@ -310,11 +355,6 @@ Result<int64_t> Scanner::scan_source(const std::string& path,
         LOG_WARN("VACUUM failed: " + get_err(vacuum_result).message);
     }
 
-    // Determine final status
-    ScanStatus final_status = cancel_.is_cancelled()
-        ? ScanStatus::Cancelled : ScanStatus::Completed;
-    scan_mgr_.finish(scan_id, final_status);
-
     clear_progress();
 
     LOG_INFO("Scan complete: " + std::to_string(files_scanned_) + " files, " +
@@ -322,6 +362,17 @@ Result<int64_t> Scanner::scan_source(const std::string& path,
              std::to_string(errors_) + " errors");
 
     return source_id;
+}
+
+Result<bool> Scanner::drop_shadow(int64_t source_id) {
+    Transaction txn(db_);
+    auto rm = source_mgr_.remove_tree(source_id);
+    if (is_err(rm)) {
+        LOG_WARN("Failed to drop shadow source data: " +
+                 get_err(rm).message);
+        return rm;
+    }
+    return txn.commit();
 }
 
 Result<int64_t> Scanner::scan_directory(int64_t source_id, int64_t parent_id,
@@ -436,10 +487,22 @@ Result<int64_t> Scanner::scan_directory(int64_t source_id, int64_t parent_id,
 
         batch_counter_++;
 
-        // Batch commit
+        // Batch commit: checkpoint every BATCH_SIZE entries so the WAL
+        // is merged and cannot grow to the size of the whole scan.  On
+        // failure the uncommitted tail is rolled back by scan_source;
+        // committed batches belong to the shadow source and are dropped
+        // together with it.
         if (batch_counter_ % BATCH_SIZE == 0) {
-            LOG_DEBUG("Batch checkpoint at " + std::to_string(batch_counter_) +
-                      " entries");
+            auto cc = db_.execute("COMMIT;");
+            if (is_err(cc)) {
+                return Error{1, "Batch commit failed: " + get_err(cc).message};
+            }
+            auto bb = db_.execute("BEGIN;");
+            if (is_err(bb)) {
+                return Error{1, "Batch begin failed"};
+            }
+            LOG_DEBUG("Batch checkpoint at " +
+                      std::to_string(batch_counter_) + " entries");
         }
 
         // Recurse into directories
@@ -532,7 +595,12 @@ void Scanner::expand_container_if_needed(
     // containers even when expansion is disabled, so `info` can show
     // them. Expansion below is gated by max_container_depth.
     std::string ext = file_path.extension().string();
-    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+    // ::tolower on a bare char is UB for non-ASCII bytes; fold via
+    // unsigned char first.
+    std::transform(ext.begin(), ext.end(), ext.begin(),
+                   [](unsigned char c) {
+                       return static_cast<char>(std::tolower(c));
+                   });
     if (ext != ".iso" && ext != ".img") return;
 
     std::string name = file_path.filename().string();

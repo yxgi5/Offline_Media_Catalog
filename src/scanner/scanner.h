@@ -75,6 +75,11 @@ private:
                                     const std::filesystem::path& file_path,
                                     const ScanOptions& options);
 
+    // Drop the shadow source tree (batched scan leftovers) in its own
+    // small transaction; used on failure and on cancelled replacement
+    // scans so the previous catalog data stays untouched.
+    Result<bool> drop_shadow(int64_t source_id);
+
     // Discover and expand ISO containers (shared by directory and single-file scans)
     void expand_container_if_needed(int64_t entry_id,
                                     const std::filesystem::path& file_path,
