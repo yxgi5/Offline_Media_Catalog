@@ -199,6 +199,7 @@ TEST(HostAllowedTest, LoopbackOnly) {
     EXPECT_TRUE(host_allowed("localhost:8080"));
     EXPECT_TRUE(host_allowed("[::1]"));
     EXPECT_TRUE(host_allowed("[::1]:8080"));
+    EXPECT_TRUE(host_allowed("::1"));  // bare IPv6, colons are not a port
     EXPECT_FALSE(host_allowed(""));
     EXPECT_FALSE(host_allowed("evil.example.com"));
     EXPECT_FALSE(host_allowed("evil.example.com:80"));

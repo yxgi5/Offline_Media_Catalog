@@ -96,14 +96,17 @@ void close_conn(int sock) {
 
 int run_server(const std::string& db_path, int port,
                const std::string& web_root) {
-    Database db;
-    auto open_result = db.open_readonly(db_path);
+    // db and viewer live on the heap: detached handler threads capture
+    // the viewer by shared_ptr, so an accept() failure that exits the
+    // accept loop cannot leave running threads with dangling references.
+    auto db = std::make_shared<Database>();
+    auto open_result = db->open_readonly(db_path);
     if (is_err(open_result)) {
         LOG_ERROR(get_err(open_result).message);
         return 1;
     }
 
-    Viewer viewer(db, web_root);
+    auto viewer = std::make_shared<Viewer>(*db, web_root);
 
 #ifdef _WIN32
     WSADATA wsa;
@@ -160,7 +163,7 @@ int run_server(const std::string& db_path, int port,
             if (errno == EINTR) continue;
             break;
         }
-        std::thread([c, &viewer]() { handle_client(c, viewer); }).detach();
+        std::thread([c, viewer]() { handle_client(c, *viewer); }).detach();
     }
 
 #ifdef _WIN32

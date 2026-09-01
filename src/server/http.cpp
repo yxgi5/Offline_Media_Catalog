@@ -177,14 +177,24 @@ void send_404(int sock, const std::string& what) {
 }
 
 bool host_allowed(const std::string& host) {
-    // Strip an optional :port.  For IPv6 the port follows the closing
-    // bracket, so only a colon after ']' is a port separator.
+    // Strip an optional :port.  A colon is a port separator only when
+    // it follows the closing ']' (bracketed IPv6 like [::1]:8080) or
+    // when the string has exactly one colon (host:port).  A bare IPv6
+    // like ::1 has several colons and no brackets, so it is matched
+    // as-is below.
     std::string h = host;
+    size_t colon_count = 0;
+    for (char c : h) {
+        if (c == ':') colon_count++;
+    }
     size_t close_bracket = h.find(']');
     size_t colon = h.rfind(':');
-    if (colon != std::string::npos &&
-        (close_bracket == std::string::npos || colon > close_bracket)) {
-        h = h.substr(0, colon);
+    if (colon != std::string::npos) {
+        bool bracketed = !h.empty() && h.front() == '[';
+        bool port_sep = bracketed
+            ? (close_bracket != std::string::npos && colon > close_bracket)
+            : (colon_count == 1);
+        if (port_sep) h = h.substr(0, colon);
     }
     if (h.size() >= 2 && h.front() == '[' && h.back() == ']') {
         h = h.substr(1, h.size() - 2);
