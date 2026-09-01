@@ -106,6 +106,30 @@ bool read_request(int sock, HttpRequest& req) {
         req.path = target.substr(0, qpos);
         req.query = target.substr(qpos + 1);
     }
+
+    // Parse the remaining header lines: cap the line count and pick up
+    // the Host header (used by the loopback check in handle_client).
+    req.host.clear();
+    size_t line_start = header.size() + 2;  // after the request line
+    size_t nlines = 0;
+    while (line_start < data.size()) {
+        size_t le = data.find("\r\n", line_start);
+        if (le == std::string::npos) le = data.size();
+        std::string line = data.substr(line_start, le - line_start);
+        if (line.empty()) break;  // blank line ends the headers
+        if (++nlines > 32) return false;
+        if (line.size() > 5 && line.compare(0, 5, "Host:") == 0) {
+            req.host = line.substr(5);
+            size_t b = req.host.find_first_not_of(" \t");
+            size_t e = req.host.find_last_not_of(" \t");
+            if (b == std::string::npos) {
+                req.host.clear();
+            } else {
+                req.host = req.host.substr(b, e - b + 1);
+            }
+        }
+        line_start = le + 2;
+    }
     return true;
 }
 
@@ -126,10 +150,18 @@ bool query_param(const std::string& query, const std::string& key,
     return false;
 }
 
-void send_response(int sock, const std::string& content_type,
+void send_response(int sock, int status, const std::string& content_type,
                    const std::string& body) {
+    std::string status_line;
+    switch (status) {
+        case 200: status_line = "200 OK"; break;
+        case 400: status_line = "400 Bad Request"; break;
+        case 404: status_line = "404 Not Found"; break;
+        case 500: status_line = "500 Internal Server Error"; break;
+        default:  status_line = std::to_string(status) + " Status"; break;
+    }
     std::ostringstream resp;
-    resp << "HTTP/1.1 200 OK\r\n"
+    resp << "HTTP/1.1 " << status_line << "\r\n"
          << "Content-Type: " << content_type << "; charset=utf-8\r\n"
          << "Content-Length: " << body.size() << "\r\n"
          << "Connection: close\r\n"
@@ -141,7 +173,23 @@ void send_response(int sock, const std::string& content_type,
 }
 
 void send_404(int sock, const std::string& what) {
-    send_response(sock, "text/plain", "404 Not Found: " + what);
+    send_response(sock, 404, "text/plain", "404 Not Found: " + what);
+}
+
+bool host_allowed(const std::string& host) {
+    // Strip an optional :port.  For IPv6 the port follows the closing
+    // bracket, so only a colon after ']' is a port separator.
+    std::string h = host;
+    size_t close_bracket = h.find(']');
+    size_t colon = h.rfind(':');
+    if (colon != std::string::npos &&
+        (close_bracket == std::string::npos || colon > close_bracket)) {
+        h = h.substr(0, colon);
+    }
+    if (h.size() >= 2 && h.front() == '[' && h.back() == ']') {
+        h = h.substr(1, h.size() - 2);
+    }
+    return h == "127.0.0.1" || h == "localhost" || h == "::1";
 }
 
 }  // namespace offcat

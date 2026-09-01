@@ -151,5 +151,59 @@ TEST_F(ViewerApiTest, JsonEscapesUnicodeAndSpecials) {
     EXPECT_NE(j.find("\\\"quoted\\\" & <tag>"), std::string::npos);
 }
 
+// A malformed numeric query parameter used to throw std::invalid_argument
+// out of a detached handler thread and abort the whole server process
+// (P0: GET /api/tree?parent_id=x killed `offcat serve`).  Values must
+// degrade to safe defaults and still return well-formed JSON.
+TEST_F(ViewerApiTest, MalformedNumbersDoNotThrow) {
+    Viewer v(db_, "");
+    EXPECT_NO_THROW(get(v, "/api/tree", "parent_id=abc&source_id=1"));
+    EXPECT_NO_THROW(get(v, "/api/tree", "parent_id=1&source_id=xyz"));
+    EXPECT_NO_THROW(get(v, "/api/entry", "id=notanumber"));
+    EXPECT_NO_THROW(get(v, "/api/search", "q=sub&limit=notanumber"));
+    EXPECT_NO_THROW(get(v, "/api/search", "q=sub&limit=999999999999999999"));
+    // parent_id degrades to 0 (top level of the given source).
+    EXPECT_NE(get(v, "/api/tree", "parent_id=abc&source_id=1")
+                  .find("\"name\":\"root.txt\""),
+              std::string::npos);
+    // id degrades to -1, which simply misses.
+    EXPECT_EQ(get(v, "/api/entry", "id=notanumber"), "{}");
+}
+
+TEST_F(ViewerApiTest, DriveLetterTraversalRejected) {
+    std::string root = (std::filesystem::temp_directory_path() /
+                        "offcat_test_webroot2").string();
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root);
+    {
+        std::ofstream f((std::filesystem::path(root) / "index.html"));
+        f << "<html>external frontend</html>";
+    }
+
+    Viewer v(db_, root);
+    EXPECT_EQ(get(v, "/C:/Windows/win.ini"), "");
+    EXPECT_EQ(get(v, "/C:/Windows/System32/drivers/etc/hosts"), "");
+    EXPECT_EQ(get(v, "//server/share/secret.txt"), "");
+    // Normal assets still work.
+    EXPECT_EQ(get(v, "/"), "<html>external frontend</html>");
+
+    std::filesystem::remove_all(root);
+}
+
+// Host header whitelist: the DNS-rebinding defense.  Only loopback host
+// values pass; attacker domains (the actual rebinding vector) are rejected.
+TEST(HostAllowedTest, LoopbackOnly) {
+    EXPECT_TRUE(host_allowed("127.0.0.1"));
+    EXPECT_TRUE(host_allowed("127.0.0.1:8080"));
+    EXPECT_TRUE(host_allowed("localhost"));
+    EXPECT_TRUE(host_allowed("localhost:8080"));
+    EXPECT_TRUE(host_allowed("[::1]"));
+    EXPECT_TRUE(host_allowed("[::1]:8080"));
+    EXPECT_FALSE(host_allowed(""));
+    EXPECT_FALSE(host_allowed("evil.example.com"));
+    EXPECT_FALSE(host_allowed("evil.example.com:80"));
+    EXPECT_FALSE(host_allowed("127.0.0.1.evil.com"));
+}
+
 }  // namespace
 }  // namespace offcat

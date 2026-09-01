@@ -1,6 +1,8 @@
 #include "server/viewer.h"
 
 #include <algorithm>
+#include <cerrno>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -14,6 +16,28 @@ namespace {
 
 std::string entry_type_name(EntryType t) {
     return entry_type_to_string(t);
+}
+
+// Parse an integer query parameter without exceptions.  Malformed or
+// out-of-range input yields the fallback: std::stoll would throw
+// std::invalid_argument out of a detached handler thread and abort the
+// whole process on a single bad URL.
+int64_t parse_i64(const std::string& s, int64_t fallback) {
+    if (s.empty()) return fallback;
+    char* end = nullptr;
+    errno = 0;
+    long long v = std::strtoll(s.c_str(), &end, 10);
+    if (errno != 0 || end != s.c_str() + s.size()) return fallback;
+    return static_cast<int64_t>(v);
+}
+
+int parse_i32(const std::string& s, int fallback) {
+    if (s.empty()) return fallback;
+    char* end = nullptr;
+    errno = 0;
+    long v = std::strtol(s.c_str(), &end, 10);
+    if (errno != 0 || end != s.c_str() + s.size()) return fallback;
+    return static_cast<int>(v);
 }
 
 // Map a static asset path to a MIME type.
@@ -125,8 +149,8 @@ std::string Viewer::api_tree(const std::string& query) {
     std::string parent_s, source_s;
     query_param(query, "parent_id", parent_s);
     query_param(query, "source_id", source_s);
-    int64_t parent_id = parent_s.empty() ? 0 : std::stoll(parent_s);
-    int64_t source_id = source_s.empty() ? -1 : std::stoll(source_s);
+    int64_t parent_id = parse_i64(parent_s, 0);
+    int64_t source_id = parse_i64(source_s, -1);
 
     std::vector<EntryData> children;
     if (parent_id == 0) {
@@ -166,7 +190,7 @@ std::string Viewer::api_entry(const std::string& query) {
     std::string id_s;
     query_param(query, "id", id_s);
     if (id_s.empty()) return "{}";
-    int64_t id = std::stoll(id_s);
+    int64_t id = parse_i64(id_s, -1);
 
     auto result = entries_.get_by_id(id);
     if (is_err(result)) return "{}";
@@ -217,7 +241,7 @@ std::string Viewer::api_search(const std::string& query) {
     query_param(query, "q", q);
     query_param(query, "limit", limit_s);
     if (q.empty()) return "[]";
-    int limit = limit_s.empty() ? 200 : std::stoi(limit_s);
+    int limit = parse_i32(limit_s, 200);
 
     auto result = search_.search(q, limit);
     if (is_err(result)) {
@@ -265,6 +289,12 @@ std::string Viewer::serve_static(const std::string& path) {
         if (slash == std::string::npos) break;
         pos = slash + 1;
     }
+
+    // Reject drive-letter and absolute paths: with C++17 path append a
+    // root-name on the right replaces the left operand entirely, so
+    // rel = "C:/Windows/win.ini" would read any file outside the root.
+    if (rel.find(':') != std::string::npos) return "";
+    if (std::filesystem::path(rel).is_absolute()) return "";
 
     std::error_code ec;
     std::filesystem::path full = std::filesystem::path(web_root_) / rel;

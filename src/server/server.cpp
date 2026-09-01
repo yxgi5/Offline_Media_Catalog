@@ -26,25 +26,65 @@
 namespace offcat {
 namespace {
 
+void close_conn(int sock);
+
 void handle_client(int sock, Viewer& viewer) {
+    // Receive timeout: a client that connects and then stalls must not
+    // pin a detached thread forever.  recv() then fails and read_request
+    // returns false, closing the socket.
+#ifdef _WIN32
+    DWORD recv_timeout = 10000;
+#else
+    timeval recv_timeout{10, 0};
+#endif
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO,
+               reinterpret_cast<const char*>(&recv_timeout),
+               sizeof(recv_timeout));
+
     HttpRequest req;
     if (!read_request(sock, req)) {
-#ifdef _WIN32
-        closesocket(sock);
-#else
-        close(sock);
-#endif
+        close_conn(sock);
         return;
     }
-    std::string body = viewer.handle(req);
+    // Loopback-only Host check: blocks DNS rebinding (an attacker page
+    // would send its own domain as Host).  Also rejects requests with no
+    // Host header, which HTTP/1.1 requires.
+    if (!host_allowed(req.host)) {
+        send_response(sock, 400, "text/plain",
+                      "400 Bad Request: invalid Host header");
+        close_conn(sock);
+        return;
+    }
+
+    std::string body;
+    try {
+        body = viewer.handle(req);
+    } catch (const std::exception& e) {
+        // Last line of defense: any exception escaping a detached thread
+        // would call std::terminate and kill the whole server.
+        LOG_WARN("Request failed: " + std::string(e.what()));
+        send_response(sock, 500, "text/plain", "500 Internal Server Error");
+        close_conn(sock);
+        return;
+    } catch (...) {
+        LOG_WARN("Request failed");
+        send_response(sock, 500, "text/plain", "500 Internal Server Error");
+        close_conn(sock);
+        return;
+    }
+
     if (body.empty()) {
         send_404(sock, req.path);
     } else {
         std::string ct = viewer.is_api(req.path)
             ? "application/json"
             : viewer.content_type_for(req.path);
-        send_response(sock, ct, body);
+        send_response(sock, 200, ct, body);
     }
+    close_conn(sock);
+}
+
+void close_conn(int sock) {
 #ifdef _WIN32
     closesocket(sock);
 #else
