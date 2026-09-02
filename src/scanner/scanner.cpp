@@ -15,6 +15,7 @@
 #include <fstream>
 #include <iostream>
 #include <sstream>
+#include <vector>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -398,28 +399,40 @@ Result<bool> Scanner::recover_orphaned_scans() {
     // Any scan row still InProgress when a new scan starts belongs to a
     // dead process (the CLI runs one scan at a time and always finishes
     // its records), so its source tree is a crash leftover: drop it.
-    Statement stmt(db_, "SELECT source_id FROM scan WHERE status = ?");
-    if (!stmt.is_valid()) {
-        return Error{1, "Failed to prepare orphan scan lookup"};
+    // Collect the ids first: SQLite makes no guarantee for a cursor over
+    // a table being modified mid-iteration, and BEGIN must not run while
+    // the SELECT cursor still holds an implicit read transaction.
+    std::vector<int64_t> orphans;
+    {
+        Statement stmt(db_, "SELECT source_id FROM scan WHERE status = ?");
+        if (!stmt.is_valid()) {
+            return Error{1, "Failed to prepare orphan scan lookup"};
+        }
+        stmt.bind_int(1, static_cast<int>(ScanStatus::InProgress));
+        while (stmt.step()) {
+            orphans.push_back(stmt.column_int64(0));
+        }
     }
-    stmt.bind_int(1, static_cast<int>(ScanStatus::InProgress));
+    if (orphans.empty()) return true;
+
+    // One transaction for the whole cleanup: remove_tree's deferred
+    // foreign-key checks need an active transaction.
+    Transaction txn(db_);
     int64_t orphaned = 0;
-    while (stmt.step()) {
-        int64_t source_id = stmt.column_int64(0);
-        Transaction txn(db_);
+    for (int64_t source_id : orphans) {
         auto rm = source_mgr_.remove_tree(source_id);
         if (is_err(rm)) {
             LOG_WARN("Failed to remove orphaned source data: " +
                      get_err(rm).message);
             continue;
         }
-        auto commit_result = txn.commit();
-        if (is_err(commit_result)) {
-            LOG_WARN("Failed to commit orphan cleanup: " +
-                     get_err(commit_result).message);
-            continue;
-        }
         orphaned++;
+    }
+    auto commit_result = txn.commit();
+    if (is_err(commit_result)) {
+        LOG_WARN("Failed to commit orphan cleanup: " +
+                 get_err(commit_result).message);
+        return commit_result;
     }
     if (orphaned > 0) {
         LOG_INFO("Removed " + std::to_string(orphaned) +

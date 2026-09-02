@@ -464,20 +464,24 @@ TEST(ScannerTest, OrphanedScanRecoveredAtNextScan) {
     Database db;
     ASSERT_TRUE(is_ok(db.create(db_path)));
 
-    // Simulate a crash leftover: a source whose scan row is still
-    // InProgress (a batched scan killed between checkpoints).
+    // Simulate crash leftovers: two sources whose scan rows are still
+    // InProgress (batched scans killed between checkpoints).  Two orphans
+    // exercise the multi-row cleanup path — the SELECT cursor must not
+    // skip rows while the cleanup deletes them.
     SourceManager sm(db);
-    SourceData source;
-    source.name = "orphan";
-    source.type = SourceType::Directory;
-    source.source_path = dir;
-    auto src_result = sm.insert(source);
-    ASSERT_TRUE(is_ok(src_result));
-    ScanData scan;
-    scan.source_id = get_ok(src_result);
-    scan.status = ScanStatus::InProgress;
-    auto scan_result = ScanManager(db).insert(scan);
-    ASSERT_TRUE(is_ok(scan_result));
+    for (int i = 0; i < 2; ++i) {
+        SourceData source;
+        source.name = "orphan" + std::to_string(i);
+        source.type = SourceType::Directory;
+        source.source_path = dir;
+        auto src_result = sm.insert(source);
+        ASSERT_TRUE(is_ok(src_result));
+        ScanData scan;
+        scan.source_id = get_ok(src_result);
+        scan.status = ScanStatus::InProgress;
+        auto scan_result = ScanManager(db).insert(scan);
+        ASSERT_TRUE(is_ok(scan_result));
+    }
 
     // The next scan must clean the orphan and proceed normally.
     CancellationManager cancel;
@@ -488,9 +492,9 @@ TEST(ScannerTest, OrphanedScanRecoveredAtNextScan) {
 
     auto sources = sm.get_all();
     ASSERT_TRUE(is_ok(sources));
-    ASSERT_EQ(get_ok(sources).size(), 1);  // orphan removed
-    // The fresh scan row is Completed; had the orphan survived there
-    // would be two scan rows for this source (InProgress + Completed).
+    ASSERT_EQ(get_ok(sources).size(), 1);  // orphans removed
+    // The fresh scan row is Completed; had the orphans survived there
+    // would be three scan rows for this source (InProgress + Completed).
     // (SQLite may reuse the orphan's rowid, so the ids are not compared.)
     int64_t new_id = get_ok(sources)[0].id;
     auto scans = ScanManager(db).get_by_source(new_id);
