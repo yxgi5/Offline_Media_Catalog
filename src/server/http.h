@@ -8,9 +8,9 @@
 namespace offcat {
 
 struct HttpRequest {
-    std::string path;   // path only, without query
-    std::string query;  // raw query string (may be empty)
-    std::string host;   // Host header value (empty when absent)
+    std::string path{};   // path only, without query
+    std::string query{};  // raw query string (may be empty)
+    std::string host{};   // Host header value (empty when absent)
 };
 
 std::string url_decode(const std::string& s);

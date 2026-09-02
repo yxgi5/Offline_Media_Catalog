@@ -203,3 +203,14 @@ if(OFFCAT_BUILD_TESTS)
         gtest_discover_tests(offcat_tests)
     endif()
 endif()
+
+# ── Warnings ─────────────────────────────────────────────────────────
+# -Wall -Wextra on our own targets only (not sqlite3/googletest), so
+# [[nodiscard]] and the other default diagnostics stay effective.
+if(NOT MSVC)
+    foreach(tgt offcat_core offcat_providers offcat_server offcat offcat_tests)
+        if(TARGET ${tgt})
+            target_compile_options(${tgt} PRIVATE -Wall -Wextra)
+        endif()
+    endforeach()
+endif()
