@@ -163,7 +163,9 @@ int run_server(const std::string& db_path, int port,
             if (errno == EINTR) continue;
             break;
         }
-        std::thread([c, viewer]() { handle_client(c, *viewer); }).detach();
+        // Capture db alongside viewer: Viewer holds a Database&, so the
+        // database must outlive every detached handler thread.
+        std::thread([c, db, viewer]() { handle_client(c, *viewer); }).detach();
     }
 
 #ifdef _WIN32
