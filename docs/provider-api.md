@@ -56,11 +56,11 @@ ProviderRegistry::instance()
 - `find_provider(type)`：按类型查找 / look up by type
 - `probe_file(path)`：依次 probe，返回第一个匹配的 Provider（仅在扫描启用内容探测时使用）/ probes in order, returns the first matching provider (used only when the scan enables content probing)
 
-容器发现（Discovery）默认由扫描器按扩展名完成（`.iso` / `.img`），
+容器发现（Discovery）默认由扫描器按扩展名完成（`.iso`），
 再经 `find_provider("iso")` 解析为具体 Provider；`--probe-containers`
 启用时，扫描器额外对 ≥ 1 MiB 且扩展名不匹配的文件调用 `probe_file`。
 
-Container discovery is done by the scanner via extension (`.iso` / `.img`)
+Container discovery is done by the scanner via extension (`.iso`)
 by default, resolved through `find_provider("iso")`; with
 `--probe-containers` enabled, the scanner additionally calls `probe_file`
 on files ≥ 1 MiB whose extension does not match.
@@ -100,11 +100,11 @@ struct ContainerOptions {
 已实现 / Implemented:
 
 - `max_depth`：容器嵌套层数。ISO Provider 在 walk 中发现
-  `.iso`/`.img`/`.udf` 文件且 `current_depth < max_depth` 时，把
+  `.iso` 文件且 `current_depth < max_depth` 时，把
   该文件提取到临时文件并递归展开；目录树本身不受此值限制。
   CLI `--depth` → ScanOptions.max_container_depth → 此处
   Container nesting level. When the ISO provider's walk finds
-  `.iso`/`.img`/`.udf` files and `current_depth < max_depth`, it extracts the
+  `.iso` files and `current_depth < max_depth`, it extracts the
   file to a temporary location and expands it recursively; the directory tree
   itself is not limited by this value. CLI `--depth` →
   ScanOptions.max_container_depth → here.

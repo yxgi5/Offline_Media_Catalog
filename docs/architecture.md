@@ -133,7 +133,7 @@ scan_source(path, options)
       → 同步更新 FTS5 索引
       → ISO 文件总是注册 Container 记录；--probe-containers 时也按内容探测；--depth >= 1 时 Provider 展开
       → 启用 checksum 时：流式计算 SHA-256/MD5/CRC32
-  → 路径是单个文件（.iso/.img）：同样注册 Container 并展开
+  → 路径是单个文件（.iso）：同样注册 Container 并展开
   → 提交剩余批次
   → 原子切换：一个小事务内删除旧树 + 关闭 Scan 记录（completed / cancelled）
   → FTS optimize + VACUUM
@@ -170,7 +170,7 @@ atomically on crash but grew the WAL to the size of the whole scan.
 
 ### 容器发现的取舍 / Container-Discovery Trade-off
 
-发现阶段（`--depth 0` 也注册容器）**只按扩展名判断**（`.iso`/`.img`），
+发现阶段（`--depth 0` 也注册容器）**只按扩展名判断**（`.iso`），
 不打开文件验证内容。理由：离线媒体归档的目录里满是 GB 级大文件，
 对每个扩展名匹配的文件多一次 open+read（哪怕只读几个扇区）都会放大
 成可感知的 I/O 成本；而真镜像的内容解析在展开阶段本来就要做，
@@ -181,13 +181,13 @@ warning 并计入 errors，文件条目本身照常收录（元数据 + checksum
 数据不丢）。已知后果：`--depth 0` 不展开、不验证，假镜像会留下一条
 打不开的容器记录（`info`/查看器可见），属本取舍的接受范围。
 
-漏报（真镜像被改名、无 `.iso`/`.img` 扩展名）由可选的
+漏报（真镜像被改名、无 `.iso` 扩展名）由可选的
 `--probe-containers` 覆盖：启用后对 ≥ 1 MiB 且扩展名不匹配的文件按内容
 探测。若未来要收紧误报，可在发现阶段加轻量 magic 验证（UDF 卷序 +
 sector 16 的 CD001，只读几个扇区），当前不实现。
 
 Discovery (which registers containers even at `--depth 0`) is
-extension-based (`.iso`/`.img`) and does not open the file to verify
+extension-based (`.iso`) and does not open the file to verify
 content. Rationale: archive directories hold GB-sized files, so an extra
 open+read per extension-matched file (even a few sectors) would be
 measurable I/O, and real images are content-parsed during expansion
@@ -201,11 +201,23 @@ expansion and no verification, so a fake image keeps a container row
 that cannot be opened (visible in `info`/the viewer); this is an
 accepted part of the trade-off.
 
-False negatives (renamed images without `.iso`/`.img` extensions) are
+False negatives (renamed images without the `.iso` extension) are
 covered by the optional `--probe-containers` flag, which content-probes
 files ≥ 1 MiB whose extension does not match. Tightening false positives
 later could add a lightweight magic check (UDF volume sequence + CD001
 at sector 16, a few sectors only) to discovery; not implemented today.
+
+扩展名范围限定 `.iso`：早期实现还接受 `.img`（嵌套发现含 `.udf`），
+但项目没有针对这些格式的专门解析器——它们能解析只是因为内容恰好是
+UDF/ISO9660（走内容探测），且测试零覆盖。v1.2.3 起按设计只识别
+`.iso`；改名/无扩展名镜像仍由 `--probe-containers` 覆盖。
+
+The extension scope is `.iso` only: early builds also accepted `.img`
+(nested discovery also matched `.udf`), but there is no dedicated
+parser for those formats — they were only parseable when their content
+happened to be UDF/ISO9660 (content probing), with no test coverage.
+Since v1.2.3 discovery follows the spec and matches `.iso` only;
+renamed/extension-less images remain covered by `--probe-containers`.
 
 ## Windows 非 ASCII 命令行参数 / Non-ASCII Command-Line Arguments on Windows
 
@@ -251,7 +263,7 @@ scan(container_entry_id, db, options)
       → 定位 rr_moved/.rr_moved，占位符（0x02-0x09）还原为真实目录
       → 无法还原的占位符跳过
   → 目录树始终完整展开（防死循环上限 256 层），写入虚拟条目
-  → 发现 `.iso`/`.img`/`.udf` 文件且当前嵌套层数 < max_depth 时，
+  → 发现 `.iso` 文件且当前嵌套层数 < max_depth 时，
     提取到临时文件后递归展开（ISO Provider 内部完成）
   → 虚拟条目经 VirtualTreeWriter 写入（is_virtual=1 + FTS5）
 ```

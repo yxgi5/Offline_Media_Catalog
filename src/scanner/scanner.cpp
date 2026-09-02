@@ -132,7 +132,7 @@ SourceType Scanner::detect_source_type(const std::string& path,
                        [](unsigned char c) {
                            return static_cast<char>(std::tolower(c));
                        });
-        if (ext == ".iso" || ext == ".img") {
+        if (ext == ".iso") {
             return SourceType::ISO;
         }
         // Optional content probe for renamed or extension-less images
@@ -695,7 +695,7 @@ void Scanner::expand_container_if_needed(
                    [](unsigned char c) {
                        return static_cast<char>(std::tolower(c));
                    });
-    bool ext_match = (ext == ".iso" || ext == ".img");
+    bool ext_match = (ext == ".iso");
 
     std::shared_ptr<ContainerProvider> provider;
     if (ext_match) {

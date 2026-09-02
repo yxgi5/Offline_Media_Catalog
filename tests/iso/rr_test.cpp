@@ -811,7 +811,7 @@ TEST(IsoProviderRrTest, ScannerExpandsSingleFileSource) {
 }
 
 TEST(IsoProviderRrTest, ScannerExpandsRenamedImageWithProbe) {
-    // With probe_containers enabled, a renamed image (no .iso/.img
+    // With probe_containers enabled, a renamed image (no .iso
     // extension) is discovered and expanded via content probing.
     register_iso_provider();
 

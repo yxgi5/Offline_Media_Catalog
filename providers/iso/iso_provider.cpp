@@ -87,12 +87,16 @@ const IsoEntry* resolve_placeholder(const IsoEntry& ph,
 // True when a file name suggests an embeddable container image that
 // nested expansion may apply to.
 bool has_container_extension(const std::string& name) {
+    // Nested-container discovery is .iso-only: there is no dedicated
+    // parser for .img/.udf files (they are only parseable when their
+    // content happens to be UDF/ISO9660), so those extensions were
+    // removed in v1.2.3.
     auto dot = name.find_last_of('.');
     if (dot == std::string::npos) return false;
     std::string ext = name.substr(dot + 1);
     std::transform(ext.begin(), ext.end(), ext.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    return ext == "iso" || ext == "img" || ext == "udf";
+    return ext == "iso";
 }
 
 // Recursively expand a directory, writing virtual entries.  `reader`

@@ -422,11 +422,20 @@ and records them in the `container` table; expansion is gated by `--depth 1+`.
 architecture.md「容器发现的取舍」）。真镜像被改名时可用
 `--probe-containers` 按内容探测。
 
+扩展名限定为 `.iso`（曾接受 `.img`/`.udf`，因无专门解析器——它们能解析
+只是因为内容恰好是 UDF/ISO9660——且测试零覆盖而于 v1.2.3 移除，
+见 architecture.md「容器发现的取舍」）。
+
 Discovery is currently extension-based and does not open the file to
 verify content (a fake `.iso` is registered as a container; expansion
 failure logs a warning and bumps errors while the file itself is still
 cataloged; see "Container-Discovery Trade-off" in architecture.md).
 Renamed images can be found with `--probe-containers`.
+
+The extension scope is `.iso` only: `.img`/`.udf` were accepted briefly
+and removed in v1.2.3 for lack of a dedicated parser (they were only
+parseable when their content happened to be UDF/ISO9660) and zero test
+coverage; see "Container-Discovery Trade-off" in architecture.md.
 
 In the future users can also:
 
