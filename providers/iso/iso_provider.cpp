@@ -403,6 +403,26 @@ void walk_udf_directory(const std::vector<UdfEntry>& entries,
 
 } // namespace
 
+// ── Probe ───────────────────────────────────────────────────────────
+
+bool IsoProvider::probe(const std::string& filepath) {
+    // Content-based probe, used only when the scan enables
+    // probe_containers (--probe-containers).  Deliberately no extension
+    // gate: this is the fallback path for renamed or extension-less
+    // images (.bin, .nrg, ...).
+    {
+        UdfParser udf(filepath);
+        if (udf.open()) return true;
+    }
+
+    {
+        Iso9660Parser iso(filepath);
+        if (iso.open()) return true;
+    }
+
+    return false;
+}
+
 // ── Scan ────────────────────────────────────────────────────────────
 
 bool IsoProvider::scan(int64_t container_entry_id,

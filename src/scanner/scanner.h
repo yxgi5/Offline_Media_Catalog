@@ -99,7 +99,8 @@ private:
     void clear_progress();
 
     // Determine source type from path
-    SourceType detect_source_type(const std::string& path);
+    SourceType detect_source_type(const std::string& path,
+                                  const ScanOptions& options);
 
     // Build source name from path
     std::string build_source_name(const std::string& path);

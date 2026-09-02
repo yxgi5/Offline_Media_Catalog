@@ -15,6 +15,10 @@ class IsoProvider : public ContainerProvider {
 public:
     std::string type() const override { return "iso"; }
 
+    // Detect ISO images by content (magic at sector 16).  Called only
+    // when the scan enables probe_containers.
+    bool probe(const std::string& filepath) override;
+
     // Scan container contents into the database as virtual entries
     bool scan(int64_t container_entry_id,
               Database& db,

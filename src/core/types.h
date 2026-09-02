@@ -163,6 +163,10 @@ struct ScanOptions {
     // 0 = discover containers only, no expansion (default)
     int max_container_depth = 0;
     bool show_progress = true;  // Live progress output during the scan
+    // Content-probe container images (renamed/extension-less files).
+    // Off by default: discovery is extension-based; enabling this costs
+    // an extra open+read per file >= 1 MiB during directory scans.
+    bool probe_containers = false;
 };
 
 // ── Container options ───────────────────────────────────────────────

@@ -810,11 +810,62 @@ TEST(IsoProviderRrTest, ScannerExpandsSingleFileSource) {
     std::filesystem::remove_all(img_dir);
 }
 
+TEST(IsoProviderRrTest, ScannerExpandsRenamedImageWithProbe) {
+    // With probe_containers enabled, a renamed image (no .iso/.img
+    // extension) is discovered and expanded via content probing.
+    register_iso_provider();
+
+    std::string db_path = temp_db_path("offcat_rr_probe.db");
+    std::filesystem::remove(db_path);
+    std::filesystem::path img_dir =
+        std::filesystem::temp_directory_path() / "offcat_rr_probe";
+    std::filesystem::create_directories(img_dir);
+
+    // Pad past the probe size floor (1 MiB) so the content-probe path
+    // is exercised; trailing zeros do not affect sector-based parsing.
+    auto img = build_rr_image();
+    img.resize(1 << 20, 0);
+    write_file(img_dir / "archive.bin", img);
+
+    Database db;
+    ASSERT_TRUE(is_ok(db.create(db_path)));
+
+    CancellationManager cancel;
+    Scanner scanner(db, cancel);
+    ScanOptions options;
+    options.max_container_depth = 1;
+    options.probe_containers = true;
+
+    auto result = scanner.scan_source(img_dir.string(), options);
+    ASSERT_TRUE(is_ok(result)) << get_err(result).message;
+    EXPECT_EQ(scanner.files_scanned(), 1);
+    EXPECT_EQ(scanner.errors_count(), 0);
+
+    // The image was discovered as a container and expanded
+    auto containers = ContainerManager(db).get_all();
+    ASSERT_TRUE(is_ok(containers));
+    ASSERT_EQ(get_ok(containers).size(), 1u);
+    EXPECT_EQ(get_ok(containers)[0].type, "iso");
+
+    auto entries = EntryManager(db).get_by_source(get_ok(result));
+    ASSERT_TRUE(is_ok(entries));
+    // archive.bin plus virtual entries from the expanded image
+    EXPECT_GT(get_ok(entries).size(), 1u);
+    bool found_readme = false;
+    for (const auto& e : get_ok(entries)) {
+        if (e.name == "readme.txt") found_readme = true;
+    }
+    EXPECT_TRUE(found_readme);
+
+    db.close();
+    cleanup_db(db_path);
+    std::filesystem::remove_all(img_dir);
+}
+
 TEST(IsoProviderRrTest, ScannerSkipsRenamedImage) {
-    // Container discovery is extension-based: a valid image renamed to
-    // .bin is scanned as an ordinary file, not expanded.  Content
-    // probing was removed in v1.2.3 — no point paying an extra
-    // open+read per large file to catch renamed images.
+    // Container discovery is extension-based by default: a valid image
+    // renamed to .bin is scanned as an ordinary file, not expanded,
+    // unless --probe-containers opts into content probing.
     register_iso_provider();
 
     std::string db_path = temp_db_path("offcat_rr_probe.db");

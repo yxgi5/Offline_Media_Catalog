@@ -433,6 +433,10 @@ public:
 
     virtual std::string type() const = 0;
 
+    virtual bool probe(
+        const FileEntry& file
+    ) = 0;
+
     virtual bool scan(
         const ContainerEntry& container,
         VirtualTreeWriter& writer,

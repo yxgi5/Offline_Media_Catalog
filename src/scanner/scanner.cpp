@@ -25,6 +25,13 @@
 
 namespace offcat {
 
+namespace {
+// Content probing opens and reads each candidate file, so only files at
+// least this large are checked when probe_containers is enabled; real
+// disc images are far bigger than 1 MiB.
+constexpr int64_t kProbeMinSize = 1 << 20;
+}
+
 Scanner::Scanner(Database& db, CancellationManager& cancel)
     : db_(db), cancel_(cancel),
       source_mgr_(db), entry_mgr_(db),
@@ -107,7 +114,8 @@ void Scanner::report_hashing(const std::filesystem::path& path,
     progress_line(oss.str());
 }
 
-SourceType Scanner::detect_source_type(const std::string& path) {
+SourceType Scanner::detect_source_type(const std::string& path,
+                                        const ScanOptions& options) {
     std::error_code ec;
     auto status = std::filesystem::status(path, ec);
     if (ec) return SourceType::Other;
@@ -126,6 +134,16 @@ SourceType Scanner::detect_source_type(const std::string& path) {
                        });
         if (ext == ".iso" || ext == ".img") {
             return SourceType::ISO;
+        }
+        // Optional content probe for renamed or extension-less images
+        // (opt-in via --probe-containers).
+        if (options.probe_containers) {
+            std::error_code size_ec;
+            auto size = std::filesystem::file_size(path, size_ec);
+            if (!size_ec && size >= kProbeMinSize &&
+                ProviderRegistry::instance().probe_file(path)) {
+                return SourceType::ISO;
+            }
         }
         return SourceType::File;
     }
@@ -156,7 +174,7 @@ Result<int64_t> Scanner::scan_source(const std::string& path,
     batch_counter_ = 0;
 
     // Detect source type
-    SourceType source_type = detect_source_type(path);
+    SourceType source_type = detect_source_type(path, options);
     std::string source_name = build_source_name(path);
 
     // Validate before creating any records so a bad path leaves no
@@ -667,8 +685,9 @@ void Scanner::expand_container_if_needed(
     // Discovery always runs (spec §16): ISO files are registered as
     // containers even when expansion is disabled, so `info` can show
     // them. Expansion below is gated by max_container_depth.
-    // Discovery is extension-based: only .iso/.img files count as
-    // containers (content probing was removed in v1.2.3).
+    // Discovery is extension-based by default; with probe_containers
+    // enabled (--probe-containers), renamed or extension-less files are
+    // also probed by content.
     std::string ext = file_path.extension().string();
     // ::tolower on a bare char is UB for non-ASCII bytes; fold via
     // unsigned char first.
@@ -677,9 +696,22 @@ void Scanner::expand_container_if_needed(
                        return static_cast<char>(std::tolower(c));
                    });
     bool ext_match = (ext == ".iso" || ext == ".img");
-    if (!ext_match) return;
 
-    auto provider = ProviderRegistry::instance().find_provider("iso");
+    std::shared_ptr<ContainerProvider> provider;
+    if (ext_match) {
+        provider = ProviderRegistry::instance().find_provider("iso");
+    } else if (options.probe_containers) {
+        // Content probe for renamed or extension-less images
+        // (.bin, .nrg, ...).  Only probe files large enough to be a
+        // real disc image, so ordinary files do not pay an extra
+        // open+read.
+        std::error_code ec;
+        auto size = std::filesystem::file_size(file_path, ec);
+        if (!ec && size >= kProbeMinSize) {
+            provider = ProviderRegistry::instance()
+                           .probe_file(file_path.string());
+        }
+    }
     if (!provider) return;
 
     std::string name = file_path.filename().string();

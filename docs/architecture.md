@@ -131,7 +131,7 @@ scan_source(path, options)
   → 路径是目录：递归遍历（std::filesystem）
       → 每个 Entry 读取元数据并批量插入（每 1000 条 COMMIT + BEGIN，WAL 有界）
       → 同步更新 FTS5 索引
-      → ISO 文件总是注册 Container 记录；--depth >= 1 时 Provider 展开
+      → ISO 文件总是注册 Container 记录；--probe-containers 时也按内容探测；--depth >= 1 时 Provider 展开
       → 启用 checksum 时：流式计算 SHA-256/MD5/CRC32
   → 路径是单个文件（.iso/.img）：同样注册 Container 并展开
   → 提交剩余批次
@@ -200,6 +200,10 @@ scan and search.
 ## ISO Provider 流程 / ISO Provider Flow
 
 ```
+probe(filepath)  — 仅 --probe-containers 启用时调用 / only when --probe-containers is on
+  → UDF parser（NSR02/NSR03 检测）
+  → ISO9660 parser（CD001 检测）
+
 scan(container_entry_id, db, options)
   → 优先 UDF（最完整）
   → 其次 Joliet（Unicode 文件名）

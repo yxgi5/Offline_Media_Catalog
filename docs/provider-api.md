@@ -11,6 +11,7 @@ class ContainerProvider {
 public:
     virtual ~ContainerProvider() = default;
     virtual std::string type() const = 0;
+    virtual bool probe(const std::string& filepath) = 0;
     virtual bool scan(int64_t container_entry_id,
                       Database& db,
                       const ContainerOptions& options) = 0;
@@ -18,6 +19,7 @@ public:
 ```
 
 - `type()`：Provider 标识（"iso"、"zip" ...）/ provider identifier ("iso", "zip", ...)
+- `probe()`：按内容检测文件是否属于该格式（可选：仅 `--probe-containers` 启用时调用）/ content-based detection of whether a file belongs to this format (optional: only called when `--probe-containers` is enabled)
 - `scan()`：解析容器内容并写入 Virtual Entry（Expansion）/ parses container contents and writes virtual entries (expansion)
 
 `scan()` 契约（ISO Provider 已落实）/ The `scan()` contract (as implemented by the ISO provider):
@@ -52,13 +54,16 @@ ProviderRegistry::instance()
 ```
 
 - `find_provider(type)`：按类型查找 / look up by type
+- `probe_file(path)`：依次 probe，返回第一个匹配的 Provider（仅在扫描启用内容探测时使用）/ probes in order, returns the first matching provider (used only when the scan enables content probing)
 
-容器发现（Discovery）由扫描器按扩展名完成（`.iso` / `.img`），
-再经 `find_provider("iso")` 解析为具体 Provider；Provider 不参与发现。
+容器发现（Discovery）默认由扫描器按扩展名完成（`.iso` / `.img`），
+再经 `find_provider("iso")` 解析为具体 Provider；`--probe-containers`
+启用时，扫描器额外对 ≥ 1 MiB 且扩展名不匹配的文件调用 `probe_file`。
 
-Container discovery is done by the scanner via extension (`.iso` / `.img`),
-which then resolves the provider via `find_provider("iso")`; providers do
-not take part in discovery.
+Container discovery is done by the scanner via extension (`.iso` / `.img`)
+by default, resolved through `find_provider("iso")`; with
+`--probe-containers` enabled, the scanner additionally calls `probe_file`
+on files ≥ 1 MiB whose extension does not match.
 
 目录扫描中发现的 ISO 文件与直接扫描的单文件源（scan_file_entry）
 都通过 Registry 展开，Provider 无需感知来源差异。

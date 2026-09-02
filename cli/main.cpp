@@ -70,6 +70,10 @@ static void print_usage(const char* prog) {
         "                    (bare --checksum = all; none disables)\n"
         "  --progress <on|off> Enable/disable live scan progress\n"
         "                    (default on; bare --progress = on)\n"
+        "  --probe-containers Content-probe renamed/extension-less\n"
+        "                    images during the scan (default: extension-\n"
+        "                    based only; costs an extra open+read per\n"
+        "                    file >= 1 MiB)\n"
         "  Log levels, increasing detail: Quiet < Normal < Verbose < Debug\n"
         "                    (default Normal):\n"
         "  --quiet           Quiet: warnings/errors only; also disables progress\n"
@@ -200,6 +204,8 @@ static bool parse_checksum_flags(const std::vector<std::string>& args,
             } else {
                 options.show_progress = true;
             }
+        } else if (arg == "--probe-containers") {
+            options.probe_containers = true;
         } else {
             // Non-flag argument: path
             return true;
