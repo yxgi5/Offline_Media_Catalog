@@ -168,6 +168,45 @@ InProgress (under the CLI's single-scan model such a row can only belong
 to a dead process). The previous single-transaction design rolled back
 atomically on crash but grew the WAL to the size of the whole scan.
 
+### 容器发现的取舍 / Container-Discovery Trade-off
+
+发现阶段（`--depth 0` 也注册容器）**只按扩展名判断**（`.iso`/`.img`），
+不打开文件验证内容。理由：离线媒体归档的目录里满是 GB 级大文件，
+对每个扩展名匹配的文件多一次 open+read（哪怕只读几个扇区）都会放大
+成可感知的 I/O 成本；而真镜像的内容解析在展开阶段本来就要做，
+发现阶段再验证属于重复劳动。
+
+误报（扩展名为 `.iso` 但内容不是镜像）的代价被刻意压低：展开失败只记
+warning 并计入 errors，文件条目本身照常收录（元数据 + checksum 完整，
+数据不丢）。已知后果：`--depth 0` 不展开、不验证，假镜像会留下一条
+打不开的容器记录（`info`/查看器可见），属本取舍的接受范围。
+
+漏报（真镜像被改名、无 `.iso`/`.img` 扩展名）由可选的
+`--probe-containers` 覆盖：启用后对 ≥ 1 MiB 且扩展名不匹配的文件按内容
+探测。若未来要收紧误报，可在发现阶段加轻量 magic 验证（UDF 卷序 +
+sector 16 的 CD001，只读几个扇区），当前不实现。
+
+Discovery (which registers containers even at `--depth 0`) is
+extension-based (`.iso`/`.img`) and does not open the file to verify
+content. Rationale: archive directories hold GB-sized files, so an extra
+open+read per extension-matched file (even a few sectors) would be
+measurable I/O, and real images are content-parsed during expansion
+anyway — verifying twice is wasted work.
+
+The cost of a false positive (a file named `.iso` that is not an image)
+is deliberately low: expansion failure logs a warning and bumps the error
+count, while the file entry itself is fully cataloged (metadata +
+checksum intact). Known consequence: at `--depth 0` there is no
+expansion and no verification, so a fake image keeps a container row
+that cannot be opened (visible in `info`/the viewer); this is an
+accepted part of the trade-off.
+
+False negatives (renamed images without `.iso`/`.img` extensions) are
+covered by the optional `--probe-containers` flag, which content-probes
+files ≥ 1 MiB whose extension does not match. Tightening false positives
+later could add a lightweight magic check (UDF volume sequence + CD001
+at sector 16, a few sectors only) to discovery; not implemented today.
+
 ## Windows 非 ASCII 命令行参数 / Non-ASCII Command-Line Arguments on Windows
 
 PowerShell/cmd 启动 native 进程时，命令行参数按系统 ANSI 代码页

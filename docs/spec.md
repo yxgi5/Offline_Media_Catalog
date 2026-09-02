@@ -416,6 +416,18 @@ Even without expanding a container, `foo.iso` must still be recognizable as `con
 So **discovery** and **expansion** are two distinct concepts. Discovery is
 implemented: a scan at the default `--depth 0` still recognizes containers
 and records them in the `container` table; expansion is gated by `--depth 1+`.
+
+发现目前按扩展名判断，不打开文件验证内容（假 `.iso` 会被登记为容器，
+展开失败记 warning + errors，文件本身照常收录；取舍详见
+architecture.md「容器发现的取舍」）。真镜像被改名时可用
+`--probe-containers` 按内容探测。
+
+Discovery is currently extension-based and does not open the file to
+verify content (a fake `.iso` is registered as a container; expansion
+failure logs a warning and bumps errors while the file itself is still
+cataloged; see "Container-Discovery Trade-off" in architecture.md).
+Renamed images can be found with `--probe-containers`.
+
 In the future users can also:
 
 - 只发现容器，不扫描内部 / discover containers without scanning inside
