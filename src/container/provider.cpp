@@ -27,14 +27,6 @@ std::shared_ptr<ContainerProvider> ProviderRegistry::find_provider(
     return nullptr;
 }
 
-std::shared_ptr<ContainerProvider> ProviderRegistry::probe_file(
-    const std::string& filepath) const {
-    for (const auto& p : providers_) {
-        if (p->probe(filepath)) return p;
-    }
-    return nullptr;
-}
-
 std::vector<std::string> ProviderRegistry::registered_types() const {
     std::vector<std::string> types;
     for (const auto& p : providers_) {

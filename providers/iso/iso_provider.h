@@ -15,9 +15,6 @@ class IsoProvider : public ContainerProvider {
 public:
     std::string type() const override { return "iso"; }
 
-    // Detect ISO files by magic
-    bool probe(const std::string& filepath) override;
-
     // Scan container contents into the database as virtual entries
     bool scan(int64_t container_entry_id,
               Database& db,

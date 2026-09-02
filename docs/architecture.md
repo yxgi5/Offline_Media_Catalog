@@ -200,10 +200,6 @@ scan and search.
 ## ISO Provider 流程 / ISO Provider Flow
 
 ```
-probe(filepath)
-  → UDF parser（NSR02/NSR03 检测）
-  → ISO9660 parser（CD001 检测）
-
 scan(container_entry_id, db, options)
   → 优先 UDF（最完整）
   → 其次 Joliet（Unicode 文件名）

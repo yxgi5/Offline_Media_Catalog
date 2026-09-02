@@ -17,7 +17,6 @@ public:
     virtual ~ContainerProvider() = default;
 
     virtual std::string type() const = 0;
-    virtual bool probe(const std::string& filepath) = 0;
     virtual bool scan(int64_t container_entry_id,
                       Database& db,
                       const ContainerOptions& options) = 0;
@@ -31,7 +30,6 @@ public:
 
     void register_provider(std::shared_ptr<ContainerProvider> provider);
     std::shared_ptr<ContainerProvider> find_provider(const std::string& type) const;
-    std::shared_ptr<ContainerProvider> probe_file(const std::string& filepath) const;
     std::vector<std::string> registered_types() const;
 
 private:

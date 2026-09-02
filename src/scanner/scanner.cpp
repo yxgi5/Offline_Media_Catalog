@@ -24,13 +24,6 @@
 
 namespace offcat {
 
-namespace {
-// Content probing opens and reads each candidate file, so only files at
-// least this large are checked for renamed images; real disc images are
-// far bigger than 1 MiB.
-constexpr int64_t kProbeMinSize = 1 << 20;
-}
-
 Scanner::Scanner(Database& db, CancellationManager& cancel)
     : db_(db), cancel_(cancel),
       source_mgr_(db), entry_mgr_(db),
@@ -131,14 +124,6 @@ SourceType Scanner::detect_source_type(const std::string& path) {
                            return static_cast<char>(std::tolower(c));
                        });
         if (ext == ".iso" || ext == ".img") {
-            return SourceType::ISO;
-        }
-        // Content probe fallback: renamed or extension-less images are
-        // still recognized as ISO sources (see expand_container_if_needed).
-        std::error_code size_ec;
-        auto size = std::filesystem::file_size(path, size_ec);
-        if (!size_ec && size >= kProbeMinSize &&
-            ProviderRegistry::instance().probe_file(path)) {
             return SourceType::ISO;
         }
         return SourceType::File;
@@ -669,6 +654,8 @@ void Scanner::expand_container_if_needed(
     // Discovery always runs (spec §16): ISO files are registered as
     // containers even when expansion is disabled, so `info` can show
     // them. Expansion below is gated by max_container_depth.
+    // Discovery is extension-based: only .iso/.img files count as
+    // containers (content probing was removed in v1.2.3).
     std::string ext = file_path.extension().string();
     // ::tolower on a bare char is UB for non-ASCII bytes; fold via
     // unsigned char first.
@@ -677,21 +664,9 @@ void Scanner::expand_container_if_needed(
                        return static_cast<char>(std::tolower(c));
                    });
     bool ext_match = (ext == ".iso" || ext == ".img");
+    if (!ext_match) return;
 
-    std::shared_ptr<ContainerProvider> provider;
-    if (ext_match) {
-        provider = ProviderRegistry::instance().find_provider("iso");
-    } else {
-        // Content probe fallback for renamed or extension-less images
-        // (.bin, .nrg, ...).  Only probe files large enough to be a real
-        // disc image, so ordinary files do not pay an extra open+read.
-        std::error_code ec;
-        auto size = std::filesystem::file_size(file_path, ec);
-        if (!ec && size >= kProbeMinSize) {
-            provider = ProviderRegistry::instance()
-                           .probe_file(file_path.string());
-        }
-    }
+    auto provider = ProviderRegistry::instance().find_provider("iso");
     if (!provider) return;
 
     std::string name = file_path.filename().string();

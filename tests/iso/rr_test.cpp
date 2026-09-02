@@ -101,8 +101,8 @@ struct DirRecordSpec {
     int64_t extent = 0;
     int64_t size = 0;
     uint8_t flags = 0x00;          // 0x02 = directory
-    std::string iso_name;          // raw identifier bytes
-    std::vector<uint8_t> susp;     // SUSP records after the name
+    std::string iso_name{};        // raw identifier bytes
+    std::vector<uint8_t> susp{};   // SUSP records after the name
 };
 
 std::vector<uint8_t> make_dir_record(const DirRecordSpec& spec) {
@@ -810,9 +810,11 @@ TEST(IsoProviderRrTest, ScannerExpandsSingleFileSource) {
     std::filesystem::remove_all(img_dir);
 }
 
-TEST(IsoProviderRrTest, ScannerExpandsRenamedImageByContent) {
-    // A renamed image (no .iso/.img extension) must still be discovered
-    // and expanded via content probing.
+TEST(IsoProviderRrTest, ScannerSkipsRenamedImage) {
+    // Container discovery is extension-based: a valid image renamed to
+    // .bin is scanned as an ordinary file, not expanded.  Content
+    // probing was removed in v1.2.3 — no point paying an extra
+    // open+read per large file to catch renamed images.
     register_iso_provider();
 
     std::string db_path = temp_db_path("offcat_rr_probe.db");
@@ -821,10 +823,7 @@ TEST(IsoProviderRrTest, ScannerExpandsRenamedImageByContent) {
         std::filesystem::temp_directory_path() / "offcat_rr_probe";
     std::filesystem::create_directories(img_dir);
 
-    // Pad past the probe size floor (1 MiB) so the content-probe path is
-    // exercised; trailing zeros do not affect sector-based parsing.
     auto img = build_rr_image();
-    img.resize(1 << 20, 0);
     write_file(img_dir / "archive.bin", img);
 
     Database db;
@@ -840,21 +839,15 @@ TEST(IsoProviderRrTest, ScannerExpandsRenamedImageByContent) {
     EXPECT_EQ(scanner.files_scanned(), 1);
     EXPECT_EQ(scanner.errors_count(), 0);
 
-    // The image was discovered as a container and expanded
+    // Not discovered as a container: no container row, no virtual entries.
     auto containers = ContainerManager(db).get_all();
     ASSERT_TRUE(is_ok(containers));
-    ASSERT_EQ(get_ok(containers).size(), 1u);
-    EXPECT_EQ(get_ok(containers)[0].type, "iso");
+    ASSERT_TRUE(get_ok(containers).empty());
 
     auto entries = EntryManager(db).get_by_source(get_ok(result));
     ASSERT_TRUE(is_ok(entries));
-    // archive.bin plus virtual entries from the expanded image
-    EXPECT_GT(get_ok(entries).size(), 1u);
-    bool found_readme = false;
-    for (const auto& e : get_ok(entries)) {
-        if (e.name == "readme.txt") found_readme = true;
-    }
-    EXPECT_TRUE(found_readme);
+    ASSERT_EQ(get_ok(entries).size(), 1u);
+    EXPECT_EQ(get_ok(entries)[0].name, "archive.bin");
 
     db.close();
     cleanup_db(db_path);
