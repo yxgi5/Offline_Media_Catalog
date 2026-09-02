@@ -107,6 +107,46 @@ TEST(ScannerTest, ScanDirectoryTree) {
     std::filesystem::remove(db_path + "-shm");
 }
 
+// The summary counter that feeds the CLI's "were not content-probed"
+// hint: with probing off, every file >= 1 MiB without a .iso extension
+// is counted (renamed images are otherwise skipped silently); with
+// probing on, nothing is left unprobed.
+TEST(ScannerTest, UnprobedLargeFileCount) {
+    std::string dir = create_temp_dir();
+    std::string db_path = temp_db_path("offcat_unprobed_test.db");
+    std::filesystem::remove(db_path);
+
+    create_test_file(dir + "/movie.bin", std::string(1 << 20, 'x'));
+    create_test_file(dir + "/note.txt", "small");
+    create_test_file(dir + "/real.iso", std::string(2048, '\0'));
+
+    Database db;
+    ASSERT_TRUE(is_ok(db.create(db_path)));
+
+    CancellationManager cancel;
+    Scanner scanner(db, cancel);
+
+    // Default options: probing off -> exactly one large unprobed file.
+    ScanOptions options;
+    auto result = scanner.scan_source(dir, options);
+    ASSERT_TRUE(is_ok(result)) << get_err(result).message;
+    EXPECT_EQ(scanner.large_unprobed_files(), 1);
+
+    // With probing enabled nothing is "left unprobed"; the counter
+    // resets at the start of each scan.
+    options.probe_containers = true;
+    result = scanner.scan_source(dir, options);
+    ASSERT_TRUE(is_ok(result)) << get_err(result).message;
+    EXPECT_EQ(scanner.large_unprobed_files(), 0);
+
+    // Cleanup
+    db.close();
+    std::filesystem::remove_all(dir);
+    std::filesystem::remove(db_path);
+    std::filesystem::remove(db_path + "-wal");
+    std::filesystem::remove(db_path + "-shm");
+}
+
 TEST(ScannerTest, ScanWithChecksums) {
     std::string dir = create_temp_dir();
     std::string db_path = temp_db_path("offcat_checksum_test.db");

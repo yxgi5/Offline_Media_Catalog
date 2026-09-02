@@ -43,6 +43,12 @@ endif()
 # ── Options ──────────────────────────────────────────────────────────
 option(OFFCAT_BUILD_TESTS "Build test suite" ON)
 option(OFFCAT_USE_OPENSSL "Use OpenSSL for SHA-256/MD5 (fallback to embedded)" OFF)
+option(OFFCAT_WERROR "Treat compiler warnings as errors (GCC/Clang only)" OFF)
+# AddressSanitizer + UndefinedBehaviorSanitizer: runtime checks for
+# out-of-bounds access, use-after-free, leaks, integer overflow ... at
+# test time.  Used by the CI sanitize job; GCC/Clang only (MSVC uses
+# /fsanitize flags).
+option(OFFCAT_SANITIZE "Build with ASan + UBSan (GCC/Clang only)" OFF)
 
 # Statically link C++ runtime on MinGW to avoid loading mismatched
 # libstdc++/libgcc DLLs from other apps (e.g. Meld) present in PATH.
@@ -211,6 +217,20 @@ if(NOT MSVC)
     foreach(tgt offcat_core offcat_providers offcat_server offcat offcat_tests)
         if(TARGET ${tgt})
             target_compile_options(${tgt} PRIVATE -Wall -Wextra)
+            # -Werror is opt-in (OFFCAT_WERROR=ON, enabled in CI) so
+            # local builds with exotic toolchains stay lenient.
+            if(OFFCAT_WERROR)
+                target_compile_options(${tgt} PRIVATE -Werror)
+            endif()
         endif()
     endforeach()
+endif()
+
+# ── Sanitizers ───────────────────────────────────────────────────────
+# Flags apply to every target (sqlite3/googletest included): the
+# sanitizer runtime must instrument the whole binary, otherwise a
+# report from one translation unit can be missed or misattributed.
+if(OFFCAT_SANITIZE AND NOT MSVC)
+    add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer -g)
+    add_link_options(-fsanitize=address,undefined)
 endif()

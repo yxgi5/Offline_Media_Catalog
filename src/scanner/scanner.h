@@ -37,6 +37,10 @@ public:
     int64_t directories_scanned() const { return dirs_scanned_; }
     int64_t errors_count() const { return errors_; }
     int64_t total_size() const { return total_size_; }
+    // Large files (>= 1 MiB) that were not content-probed because
+    // probe_containers was off; lets the CLI hint that renamed images
+    // may have been skipped (silent false negative otherwise).
+    int64_t large_unprobed_files() const { return large_unprobed_files_; }
 
 private:
     Database& db_;
@@ -51,6 +55,7 @@ private:
     int64_t dirs_scanned_ = 0;
     int64_t errors_ = 0;
     int64_t total_size_ = 0;
+    int64_t large_unprobed_files_ = 0;
     int64_t batch_counter_ = 0;
 
     static constexpr int BATCH_SIZE = 1000;
@@ -74,6 +79,11 @@ private:
     Result<bool> compute_checksums(int64_t entry_id,
                                     const std::filesystem::path& file_path,
                                     const ScanOptions& options);
+
+    // Count large non-.iso files while content probing is off, so the
+    // CLI summary can point users at --probe-containers.
+    void note_unprobed_file(const std::filesystem::path& file_path,
+                            int64_t size, const ScanOptions& options);
 
     // Drop the shadow source tree (batched scan leftovers) in its own
     // small transaction; used on failure and on cancelled replacement

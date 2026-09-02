@@ -114,6 +114,21 @@ cmake -B build -DOFFCAT_BUILD_TESTS=OFF
 cmake -B build -DOFFCAT_USE_OPENSSL=ON
 ```
 
+### 安装与分发 / Installation and Distribution
+
+目前**没有** `install()` 规则或 CPack 打包（评审曾建议，暂不实现）：产物是
+自包含单二进制（Windows `offcat.exe` / Linux `offcat`），无动态库依赖，
+部署方式就是拷贝二进制到目标机器直接运行。将来若需要标准安装路径
+（如 `/usr/local/bin`）或安装包，再加 `install()`/CPack 即可；当前
+GitHub Release 资产已覆盖分发需求。
+
+There is deliberately **no** `install()` rule or CPack packaging yet: the
+artifacts are self-contained single binaries (`offcat.exe` on Windows,
+`offcat` on Linux) with no dynamic-library dependencies, so deployment
+is just copying the binary. Standard install paths (e.g. `/usr/local/bin`)
+or installers can be added later via `install()`/CPack; the current
+GitHub Release assets already cover distribution.
+
 ## 用法 / Usage
 
 所有命令操作 SQLite Catalog 文件（`.db`）。典型流程：创建 → 扫描 → 搜索。

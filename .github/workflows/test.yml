@@ -34,9 +34,45 @@ jobs:
           cmake -S . -B build -G Ninja
           -DCMAKE_BUILD_TYPE=Release
           -DOFFCAT_BUILD_TESTS=ON
+          -DOFFCAT_WERROR=ON
 
       - name: Build
         run: cmake --build build
 
       - name: Test
         run: ctest --test-dir build --output-on-failure
+
+  # AddressSanitizer + UndefinedBehaviorSanitizer: the Release job above
+  # proves warning-free compilation (-Werror), this one hunts runtime
+  # memory bugs (out-of-bounds, use-after-free, leaks) and UB (integer
+  # overflow, misaligned access) that tests may trigger only under
+  # instrumentation.  Debug build keeps the -O0 stack traces readable;
+  # -j2 stays within the free runner's 2-core quota.
+  sanitize:
+    name: ASan + UBSan
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Ninja
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - name: Configure
+        run: >
+          cmake -S . -B build-san -G Ninja
+          -DCMAKE_BUILD_TYPE=Debug
+          -DOFFCAT_BUILD_TESTS=ON
+          -DOFFCAT_SANITIZE=ON
+
+      - name: Build
+        run: cmake --build build-san -j 2
+
+      - name: Test
+        env:
+          # halt_on_error turns the first report into a hard failure
+          # (ctest then shows it instead of a long leak-tainted run).
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: ctest --test-dir build-san --output-on-failure

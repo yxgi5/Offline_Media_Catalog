@@ -30,6 +30,18 @@ namespace {
 // least this large are checked when probe_containers is enabled; real
 // disc images are far bigger than 1 MiB.
 constexpr int64_t kProbeMinSize = 1 << 20;
+
+// Case-insensitive .iso extension test (::tolower on a bare char is UB
+// for non-ASCII bytes, so fold via unsigned char first).  Shared by
+// container discovery and the unprobed-file counter.
+bool is_iso_extension(const std::filesystem::path& p) {
+    std::string ext = p.extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(),
+                   [](unsigned char c) {
+                       return static_cast<char>(std::tolower(c));
+                   });
+    return ext == ".iso";
+}
 }
 
 Scanner::Scanner(Database& db, CancellationManager& cancel)
@@ -171,6 +183,7 @@ Result<int64_t> Scanner::scan_source(const std::string& path,
     dirs_scanned_ = 0;
     errors_ = 0;
     total_size_ = 0;
+    large_unprobed_files_ = 0;
     batch_counter_ = 0;
 
     // Detect source type
@@ -609,6 +622,7 @@ Result<int64_t> Scanner::scan_directory(int64_t source_id, int64_t parent_id,
             }
         } else if (entry_data.type == EntryType::File) {
             files_scanned_++;
+            note_unprobed_file(entry.path(), entry_data.size, options);
 
             // Compute checksums if requested
             if (options.compute_checksum && !options.checksum_algorithms.empty()) {
@@ -664,6 +678,7 @@ Result<int64_t> Scanner::scan_file_entry(int64_t source_id, int64_t parent_id,
     }
     int64_t entry_id = get_ok(insert_result);
     files_scanned_++;
+    note_unprobed_file(file_path, entry_data.size, options);
 
     // Compute checksums if requested
     if (options.compute_checksum && !options.checksum_algorithms.empty()) {
@@ -679,6 +694,18 @@ Result<int64_t> Scanner::scan_file_entry(int64_t source_id, int64_t parent_id,
     return entry_id;
 }
 
+void Scanner::note_unprobed_file(const std::filesystem::path& file_path,
+                                 int64_t size, const ScanOptions& options) {
+    // When content probing is off, large non-.iso files are never
+    // inspected: a renamed image is silently skipped.  Counting them
+    // lets the CLI summary hint at --probe-containers without re-reading
+    // the file (size and extension are already known from the entry).
+    if (!options.probe_containers && size >= kProbeMinSize &&
+        !is_iso_extension(file_path)) {
+        large_unprobed_files_++;
+    }
+}
+
 void Scanner::expand_container_if_needed(
     int64_t entry_id, const std::filesystem::path& file_path,
     const ScanOptions& options) {
@@ -688,14 +715,7 @@ void Scanner::expand_container_if_needed(
     // Discovery is extension-based by default; with probe_containers
     // enabled (--probe-containers), renamed or extension-less files are
     // also probed by content.
-    std::string ext = file_path.extension().string();
-    // ::tolower on a bare char is UB for non-ASCII bytes; fold via
-    // unsigned char first.
-    std::transform(ext.begin(), ext.end(), ext.begin(),
-                   [](unsigned char c) {
-                       return static_cast<char>(std::tolower(c));
-                   });
-    bool ext_match = (ext == ".iso");
+    bool ext_match = is_iso_extension(file_path);
 
     std::shared_ptr<ContainerProvider> provider;
     if (ext_match) {

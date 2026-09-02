@@ -299,6 +299,15 @@ static int cmd_scan(const std::vector<std::string>& args) {
             << "Total size: " << scanner.total_size() << " bytes\n"
             << "Errors: " << scanner.errors_count() << "\n"
             << "Elapsed: " << elapsed << "s";
+    // Content probing is off by default, so renamed images are skipped
+    // without a trace; a one-line hint keeps that false negative
+    // discoverable.  Media archives are full of large non-.iso files,
+    // so the wording is deliberately neutral (no "possible image").
+    if (scanner.large_unprobed_files() > 0) {
+        summary << "\nNote: " << scanner.large_unprobed_files()
+                << " file(s) >= 1 MiB were not content-probed"
+                   " (--probe-containers detects renamed images)";
+    }
     LOG_INFO(summary.str());
 
     return g_cancel.is_cancelled() ? 130 : 0;
