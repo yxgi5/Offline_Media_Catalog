@@ -19,3 +19,6 @@ third_party/googletest-1.14.0/
 .idea/
 Thumbs.db
 Desktop.ini
+
+# CI logs downloaded for debugging (403 pages when unauthenticated)
+ci_logs*.zip

@@ -60,7 +60,6 @@ TEST(ScannerTest, ScanDirectoryTree) {
     ScanOptions options;
     auto result = scanner.scan_source(dir, options);
     ASSERT_TRUE(is_ok(result)) << get_err(result).message;
-    int64_t source_id = get_ok(result);
 
     // Verify counts
     EXPECT_EQ(scanner.files_scanned(), 4);   // root.txt, a.txt, b.bin, 深層文件.txt
@@ -87,7 +86,8 @@ TEST(ScannerTest, ScanDirectoryTree) {
 
 #ifdef _WIN32
     // Creation time is recorded by default; Windows always provides it.
-    auto entries = em.get_by_source(source_id);
+    // source_id lives here: Linux never uses it (-Wunused-variable).
+    auto entries = em.get_by_source(get_ok(result));
     ASSERT_TRUE(is_ok(entries));
     bool saw_file = false;
     for (const auto& e : get_ok(entries)) {
