@@ -49,6 +49,16 @@ option(OFFCAT_WERROR "Treat compiler warnings as errors (GCC/Clang only)" OFF)
 # test time.  Used by the CI sanitize job; GCC/Clang only (MSVC uses
 # /fsanitize flags).
 option(OFFCAT_SANITIZE "Build with ASan + UBSan (GCC/Clang only)" OFF)
+# Sanitizer flags MUST be set before any target is created:
+# add_compile_options/add_link_options write directory properties that
+# targets snapshot at creation time, so a late block would silently
+# build an uninstrumented binary (the CI job stays green while running
+# plain tests).  Applies to every target (sqlite3/googletest included)
+# because the sanitizer runtime must instrument the whole binary.
+if(OFFCAT_SANITIZE AND NOT MSVC)
+    add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer -g)
+    add_link_options(-fsanitize=address,undefined)
+endif()
 
 # Statically link C++ runtime on MinGW to avoid loading mismatched
 # libstdc++/libgcc DLLs from other apps (e.g. Meld) present in PATH.
@@ -224,13 +234,4 @@ if(NOT MSVC)
             endif()
         endif()
     endforeach()
-endif()
-
-# ── Sanitizers ───────────────────────────────────────────────────────
-# Flags apply to every target (sqlite3/googletest included): the
-# sanitizer runtime must instrument the whole binary, otherwise a
-# report from one translation unit can be missed or misattributed.
-if(OFFCAT_SANITIZE AND NOT MSVC)
-    add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer -g)
-    add_link_options(-fsanitize=address,undefined)
 endif()

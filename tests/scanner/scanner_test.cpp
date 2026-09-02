@@ -119,6 +119,10 @@ TEST(ScannerTest, UnprobedLargeFileCount) {
     create_test_file(dir + "/movie.bin", std::string(1 << 20, 'x'));
     create_test_file(dir + "/note.txt", "small");
     create_test_file(dir + "/real.iso", std::string(2048, '\0'));
+    // A 1 MiB .iso: above the size threshold but extension-matched, so
+    // it must never be counted (the extension exclusion is exercised
+    // independently of the size gate).
+    create_test_file(dir + "/big.iso", std::string(1 << 20, '\0'));
 
     Database db;
     ASSERT_TRUE(is_ok(db.create(db_path)));
@@ -126,7 +130,8 @@ TEST(ScannerTest, UnprobedLargeFileCount) {
     CancellationManager cancel;
     Scanner scanner(db, cancel);
 
-    // Default options: probing off -> exactly one large unprobed file.
+    // Default options: probing off -> exactly one large unprobed file
+    // (movie.bin; big.iso is extension-based discovery).
     ScanOptions options;
     auto result = scanner.scan_source(dir, options);
     ASSERT_TRUE(is_ok(result)) << get_err(result).message;
