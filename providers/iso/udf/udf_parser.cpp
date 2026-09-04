@@ -558,7 +558,7 @@ bool UdfParser::read_root_directory(std::vector<UdfEntry>& out) {
 // in the LVD is 0 and the PD partition start is junk; the real tree is
 // stored immediately after the anchor (AVDP) sector and every block
 // number is relative to the FSD sector.  Rebase partition 0 on the FSD
-// sector and use the first directory File Entry after it as the root.
+// sector, then pick the root directory File Entry after it.
 bool UdfParser::locate_root_in_head(std::vector<UdfEntry>& out) {
     const int64_t kScan = 512;
     const int64_t kAnchor = UDF_ANCHOR_SECTOR;
@@ -581,12 +581,38 @@ bool UdfParser::locate_root_in_head(std::vector<UdfEntry>& out) {
         partition_starts_[0] = fsd_abs;
     }
 
-    // 3. genisoimage may emit several directory File Entries before the
-    // real root (a leftover FE with a tiny/under-allocated extent).
-    // Pick the candidate whose directory stream holds the most entries
-    // (e.g. the true root spans 2 sectors with 61 FIDs, while the
-    // leftover only has a couple of garbage FIDs).
-    std::vector<UdfEntry> best;
+    // 3. genisoimage writes the directory tree right after the FSD in
+    // depth-first order (FE sector, data sector, FE sector, ...), so
+    // the true root is the first directory FE whose child directory
+    // references resolve to real directory file entries.  Leftover or
+    // placeholder FEs (Rock Ridge stubs, junk entries) fail that check
+    // and are skipped.  Keep the largest candidate as a last resort so
+    // images whose head tree does not resolve still yield something.
+    auto child_dirs_resolve = [this](const std::vector<UdfEntry>& entries) {
+        for (const auto& e : entries) {
+            if (!e.is_directory) continue;
+            // Placeholder names carry control characters (e.g. \x00 / \x01
+            // Rock Ridge stubs); real directory names never do.
+            for (unsigned char ch : e.name) {
+                if (ch < 0x20) return false;
+            }
+            // The child ICB must point at a real directory File Entry.
+            int64_t abs_fe =
+                partition_to_absolute(e.partition_ref, e.extent_location);
+            if (abs_fe < 0) return false;
+            UdfTag tag;
+            if (!read_tag(abs_fe, tag)) return false;
+            if (tag.identifier != TAG_FE && tag.identifier != TAG_EFE) {
+                return false;
+            }
+            uint8_t fe[UDF_SECTOR_SIZE];
+            if (!read_sector(abs_fe, fe, 1)) return false;
+            if (fe[16 + 11] != 4) return false;  // must be a directory
+        }
+        return true;
+    };
+
+    std::vector<UdfEntry> largest;
     int candidates = 0;
     for (int64_t s = fsd_abs + 1; s < fsd_abs + kScan; s++) {
         UdfTag tag;
@@ -604,11 +630,20 @@ bool UdfParser::locate_root_in_head(std::vector<UdfEntry>& out) {
 
         std::vector<UdfEntry> tmp;
         if (!read_directory(root_icb, tmp, 0)) continue;
-        if (tmp.size() > best.size()) best = std::move(tmp);
-        if (++candidates >= 4) break;  // Enough candidates
+
+        if (tmp.size() > largest.size()) largest = tmp;
+
+        if (!tmp.empty() && child_dirs_resolve(tmp)) {
+            out = std::move(tmp);
+            LOG_DEBUG("UDF: head-tree root found at sector " +
+                      std::to_string(s) + " with " +
+                      std::to_string(out.size()) + " entries");
+            return true;
+        }
+        if (++candidates >= 8) break;  // Enough candidates
     }
-    if (best.empty()) return false;
-    out = std::move(best);
+    if (largest.empty()) return false;
+    out = std::move(largest);
     return true;
 }
 

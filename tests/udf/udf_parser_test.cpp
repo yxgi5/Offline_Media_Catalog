@@ -340,3 +340,172 @@ TEST(UdfParserTest, BogusFsdPointerFallsBackToHead) {
 
     std::filesystem::remove(path);
 }
+
+// ── wrapped root (root holds fewer entries than its children) ───────
+//
+// Mirrors the real-world "collection folder" images: the volume root
+// directory contains a single entry (the collection folder) whose
+// children hold many more entries than the root itself.  Picking the
+// candidate with the most entries would select the collection folder's
+// contents as the root, losing the wrapper level.
+
+TEST(UdfParserTest, WrappedRootPicksFirstResolvableDirectory) {
+    constexpr int64_t kFsd = 257, kRootFe = 259, kRootData = 260;
+    constexpr int64_t kColFe = 261, kColData = 262;
+    constexpr int64_t kSubAFe = 263, kSubAData = 264;
+
+    std::vector<uint8_t> img(static_cast<size_t>(kSubAData + 1) * kSector, 0);
+
+    // VDS + anchor + FSD + TD skeleton (same as build_udf_image).
+    make_tag(img, 35 * kSector, TAG_LVD, 4);
+    put_le32(img, 35 * kSector + 248, 2048);
+    put_le32(img, 35 * kSector + 252, 0);   // FSD pointer 0 (genisoimage)
+    make_tag(img, 37 * kSector, TAG_TD, 7);
+    make_tag(img, 256 * kSector, TAG_AVDP, 256);
+    put_le32(img, 256 * kSector + 16, 32768);
+    put_le32(img, 256 * kSector + 20, 32);
+    make_tag(img, kFsd * kSector, TAG_FSD, 0);
+    make_tag(img, 258 * kSector, TAG_TD, 0);
+
+    // Root dir FE@259 (loc 2): data@260 holds "collection" only.
+    {
+        std::vector<uint8_t> alloc(8, 0);
+        put_le32(alloc, 0, 88);
+        put_le32(alloc, 4, 3);
+        put_fe(img, kRootFe, 2, 4, 88, alloc);
+        size_t off = 0;
+        off = put_fid(img, kRootData, off, 0x0A, "", 2);
+        put_fid(img, kRootData, off, 0x02, "collection", 4);
+    }
+
+    // collection dir FE@261 (loc 4): data@262 holds two sub dirs.
+    {
+        std::vector<uint8_t> alloc(8, 0);
+        put_le32(alloc, 0, 88);
+        put_le32(alloc, 4, 5);
+        put_fe(img, kColFe, 4, 4, 88, alloc);
+        size_t off = 0;
+        off = put_fid(img, kColData, off, 0x0A, "", 4);
+        off = put_fid(img, kColData, off, 0x02, "subA", 6);
+        put_fid(img, kColData, off, 0x02, "subB", 8);
+    }
+
+    // subA dir FE@263 (loc 6): data@264 holds three files — more
+    // entries than the root, which used to defeat the "most entries"
+    // heuristic.
+    {
+        std::vector<uint8_t> alloc(8, 0);
+        put_le32(alloc, 0, 88);
+        put_le32(alloc, 4, 7);
+        put_fe(img, kSubAFe, 6, 4, 88, alloc);
+        size_t off = 0;
+        off = put_fid(img, kSubAData, off, 0x0A, "", 6);
+        off = put_fid(img, kSubAData, off, 0x00, "f1.txt", 0, 16);
+        off = put_fid(img, kSubAData, off, 0x00, "f2.txt", 0, 16);
+        put_fid(img, kSubAData, off, 0x00, "f3.txt", 0, 16);
+    }
+
+    auto path =
+        std::filesystem::temp_directory_path() / "offcat_udf_wrapped.iso";
+    write_image(path, img);
+
+    {
+        UdfParser parser(path.string());
+        ASSERT_TRUE(parser.open());
+
+        std::vector<UdfEntry> root;
+        ASSERT_TRUE(parser.read_root_directory(root));
+        ASSERT_EQ(root.size(), 1u);
+        EXPECT_EQ(root[0].name, "collection");
+        EXPECT_TRUE(root[0].is_directory);
+
+        // The wrapper level must stay reachable: its children are the
+        // two sub directories, not subA's three files.
+        UdfLongAd col_icb;
+        col_icb.extent_length = 2048;
+        col_icb.location = root[0].extent_location;
+        col_icb.partition_ref = root[0].partition_ref;
+        std::vector<UdfEntry> col;
+        ASSERT_TRUE(parser.read_directory(col_icb, col, 1));
+        ASSERT_EQ(col.size(), 2u);
+        EXPECT_EQ(col[0].name, "subA");
+        EXPECT_EQ(col[1].name, "subB");
+    }
+
+    std::filesystem::remove(path);
+}
+
+// ── junk FE before the real root is skipped ─────────────────────────
+//
+// Some genisoimage images start with a leftover directory FE whose
+// child references point nowhere (garbage ICBs, e.g. Rock Ridge stub
+// entries).  The head-tree scan must skip it and land on the real root.
+
+TEST(UdfParserTest, JunkHeadDirectoryIsSkipped) {
+    constexpr int64_t kFsd = 257, kJunkFe = 259, kJunkData = 260;
+    constexpr int64_t kRootFe = 261, kRootData = 262;
+    constexpr int64_t kRealFe = 263, kRealData = 264;
+
+    std::vector<uint8_t> img(static_cast<size_t>(kRealData + 1) * kSector, 0);
+
+    make_tag(img, 35 * kSector, TAG_LVD, 4);
+    put_le32(img, 35 * kSector + 248, 2048);
+    put_le32(img, 35 * kSector + 252, 0);
+    make_tag(img, 37 * kSector, TAG_TD, 7);
+    make_tag(img, 256 * kSector, TAG_AVDP, 256);
+    put_le32(img, 256 * kSector + 16, 32768);
+    put_le32(img, 256 * kSector + 20, 32);
+    make_tag(img, kFsd * kSector, TAG_FSD, 0);
+    make_tag(img, 258 * kSector, TAG_TD, 0);
+
+    // Junk dir FE@259 (loc 2): claims a child "junkdir" whose ICB
+    // points far past the end of the image (garbage location).
+    {
+        std::vector<uint8_t> alloc(8, 0);
+        put_le32(alloc, 0, 88);
+        put_le32(alloc, 4, 3);
+        put_fe(img, kJunkFe, 2, 4, 88, alloc);
+        size_t off = 0;
+        off = put_fid(img, kJunkData, off, 0x0A, "", 2);
+        put_fid(img, kJunkData, off, 0x02, "junkdir", 400);
+    }
+
+    // Real root FE@261 (loc 4): data@262 holds "real".
+    {
+        std::vector<uint8_t> alloc(8, 0);
+        put_le32(alloc, 0, 88);
+        put_le32(alloc, 4, 5);
+        put_fe(img, kRootFe, 4, 4, 88, alloc);
+        size_t off = 0;
+        off = put_fid(img, kRootData, off, 0x0A, "", 4);
+        put_fid(img, kRootData, off, 0x02, "real", 6);
+    }
+
+    // real dir FE@263 (loc 6): data@264 holds "hello.txt".
+    {
+        std::vector<uint8_t> alloc(8, 0);
+        put_le32(alloc, 0, 88);
+        put_le32(alloc, 4, 7);
+        put_fe(img, kRealFe, 6, 4, 88, alloc);
+        size_t off = 0;
+        off = put_fid(img, kRealData, off, 0x0A, "", 6);
+        put_fid(img, kRealData, off, 0x00, "hello.txt", 0, 16);
+    }
+
+    auto path =
+        std::filesystem::temp_directory_path() / "offcat_udf_junk.iso";
+    write_image(path, img);
+
+    {
+        UdfParser parser(path.string());
+        ASSERT_TRUE(parser.open());
+
+        std::vector<UdfEntry> root;
+        ASSERT_TRUE(parser.read_root_directory(root));
+        ASSERT_EQ(root.size(), 1u);
+        EXPECT_EQ(root[0].name, "real");
+        EXPECT_TRUE(root[0].is_directory);
+    }
+
+    std::filesystem::remove(path);
+}

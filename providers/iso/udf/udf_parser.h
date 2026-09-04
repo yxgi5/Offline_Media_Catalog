@@ -127,7 +127,8 @@ private:
 
     // Fallback for genisoimage-style images whose LVD/PD pointers are
     // garbage: rebase partition 0 on the FSD sector found right after
-    // the anchor and use the first directory FE as the root.
+    // the anchor and use the first resolvable directory FE as the root
+    // (depth-first head tree), skipping junk/placeholder candidates.
     bool locate_root_in_head(std::vector<UdfEntry>& out);
 
     // Read allocation extent (possibly chained via Allocation Extent)
