@@ -114,6 +114,13 @@ cmake -B build -DOFFCAT_BUILD_TESTS=OFF
 cmake -B build -DOFFCAT_USE_OPENSSL=ON
 ```
 
+各环境的手动构建命令（MSVC 三条路线、MinGW-w64/Strawberry、MSYS2、Linux）与静态链接、
+产物校验细节见 [手动构建 / Building from Source](docs/building.md)。
+
+Manual build commands per environment (the three MSVC routes, MinGW-w64/Strawberry,
+MSYS2, Linux) plus static-linking and artifact-verification details are in
+[Building from Source](docs/building.md).
+
 ### 安装与分发 / Installation and Distribution
 
 目前**没有** `install()` 规则或 CPack 打包（评审曾建议，暂不实现）：产物是
@@ -269,6 +276,7 @@ offcat serve --web-root ./my_frontend catalog.db
 
 - [项目规格（Spec）/ Project Spec](docs/spec.md)
 - [架构 / Architecture](docs/architecture.md)
+- [手动构建 / Building from Source](docs/building.md)
 - [数据库 Schema / Database Schema](docs/catalog-schema.md)
 - [Provider API](docs/provider-api.md)
 - [Web API（前端对接契约）/ Web API (frontend contract)](docs/web-api.md)
