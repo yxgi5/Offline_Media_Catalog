@@ -81,6 +81,14 @@ if(MINGW OR MSYS)
     add_link_options(-static-libgcc -static-libstdc++ -static)
 endif()
 
+# Source files are UTF-8 without a BOM (the generated web_resources.h
+# embeds web/index.html, which carries non-ASCII text), so MSVC must be
+# told the encoding explicitly; without /utf-8 it falls back to the
+# system code page and the embedded string fails to compile.
+if(MSVC)
+    add_compile_options(/utf-8)
+endif()
+
 # ── Dependencies ─────────────────────────────────────────────────────
 include(FetchContent)
 
