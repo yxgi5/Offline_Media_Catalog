@@ -87,6 +87,11 @@ endif()
 # system code page and the embedded string fails to compile.
 if(MSVC)
     add_compile_options(/utf-8)
+    # Statically link the VC++ runtime so the binaries run without
+    # vcruntime140.dll / msvcp140.dll installed (mirrors the MinGW
+    # -static-libgcc / -static-libstdc++ choice above).  Must be set
+    # before any target is created: targets snapshot this value.
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 endif()
 
 # ── Dependencies ─────────────────────────────────────────────────────
