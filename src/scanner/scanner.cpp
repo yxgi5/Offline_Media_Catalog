@@ -10,6 +10,7 @@
 #include "core/logger.h"
 #include "container/provider.h"
 #include "platform/file_util.h"
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <fstream>

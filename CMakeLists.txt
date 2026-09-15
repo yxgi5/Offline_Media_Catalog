@@ -40,6 +40,19 @@ if(UNIX)
     add_compile_definitions(_POSIX_C_SOURCE=200809L)
 endif()
 
+# ── Target platform ──────────────────────────────────────────────────
+# CMake only sets WIN32 when it recognises the target as Windows.  In
+# MSYS2's MSYS shell (and under Cygwin) the compiler still targets
+# native Windows, but CMake reports the platform as MSYS/Cygwin and
+# WIN32 stays FALSE — plain if(WIN32) would then silently skip the
+# Win32 system libraries (ws2_32, _WIN32_WINNT ...) and fail at link
+# time with undefined __imp_* symbols.  OFFCAT_WINDOWS covers native
+# MinGW-w64 (Strawberry, msys2 MINGW64 shell) and MSYS/Cygwin alike;
+# it is FALSE on Linux, keeping ws2_32 off the link line there.
+if(WIN32 OR CYGWIN OR MSYS)
+    set(OFFCAT_WINDOWS TRUE)
+endif()
+
 # ── Options ──────────────────────────────────────────────────────────
 option(OFFCAT_BUILD_TESTS "Build test suite" ON)
 option(OFFCAT_USE_OPENSSL "Use OpenSSL for SHA-256/MD5 (fallback to embedded)" OFF)
@@ -62,7 +75,9 @@ endif()
 
 # Statically link C++ runtime on MinGW to avoid loading mismatched
 # libstdc++/libgcc DLLs from other apps (e.g. Meld) present in PATH.
-if(WIN32 AND MINGW)
+# (MINGW covers the native toolchains, MSYS the MSYS2 MSYS shell,
+# see OFFCAT_WINDOWS above.)
+if(MINGW OR MSYS)
     add_link_options(-static-libgcc -static-libstdc++ -static)
 endif()
 
@@ -96,7 +111,7 @@ target_compile_definitions(sqlite3 PRIVATE
     SQLITE_ENABLE_FTS5
     SQLITE_ENABLE_WAL
 )
-if(WIN32)
+if(OFFCAT_WINDOWS)
     target_link_libraries(sqlite3 PRIVATE ws2_32)
 endif()
 
@@ -141,7 +156,7 @@ target_include_directories(offcat_core PUBLIC
 )
 target_link_libraries(offcat_core PUBLIC sqlite3)
 
-if(WIN32)
+if(OFFCAT_WINDOWS)
     target_compile_definitions(offcat_core PUBLIC _WIN32_WINNT=0x0601 NOMINMAX)
 endif()
 # Version string (from git tag, see top of file) is part of the core
@@ -184,7 +199,7 @@ target_include_directories(offcat_server PUBLIC
     ${CMAKE_CURRENT_BINARY_DIR}
 )
 target_link_libraries(offcat_server PUBLIC offcat_core)
-if(WIN32)
+if(OFFCAT_WINDOWS)
     target_link_libraries(offcat_server PUBLIC ws2_32)
 endif()
 
